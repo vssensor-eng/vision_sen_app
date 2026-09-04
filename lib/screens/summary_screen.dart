@@ -11,7 +11,7 @@ class SummaryScreen extends StatelessWidget {
   const SummaryScreen({super.key, required this.config, required this.ble});
 
   @override
-  Widget build(BuildContext c) {
+  Widget build(BuildContext context) {
     final error = config.validate();
     return Scaffold(
       body: SafeArea(
@@ -76,7 +76,7 @@ class SummaryScreen extends StatelessWidget {
               const Spacer(),
               if (error != null)
                 OutlinedButton(
-                  onPressed: () => Navigator.pop(c),
+                  onPressed: () => Navigator.pop(context),
                   style: OutlinedButton.styleFrom(
                     minimumSize: const Size.fromHeight(52),
                     side: const BorderSide(color: Colors.redAccent),
@@ -88,7 +88,7 @@ class SummaryScreen extends StatelessWidget {
                 PrimaryButton(
                   text: 'CİHAZI GÜNCELLE',
                   icon: Icons.upload_rounded,
-                  onPressed: () => Navigator.push(c, MaterialPageRoute(builder: (_) => SetupScreen(config: config, ble: ble))),
+                  onPressed: () => Navigator.push(context, MaterialPageRoute(builder: (_) => SetupScreen(config: config, ble: ble))),
                 ),
             ],
           ),

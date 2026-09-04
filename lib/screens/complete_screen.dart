@@ -8,7 +8,7 @@ class CompleteScreen extends StatelessWidget {
   const CompleteScreen({super.key, required this.config});
 
   @override
-  Widget build(BuildContext c) => Scaffold(
+  Widget build(BuildContext context) => Scaffold(
         body: SafeArea(
           child: Padding(
             padding: const EdgeInsets.all(20),
@@ -67,7 +67,7 @@ class CompleteScreen extends StatelessWidget {
                     ]),
                   ),
                   const SizedBox(height: 28),
-                  PrimaryButton(text: 'BİTİR', onPressed: () => Navigator.popUntil(c, (r) => r.isFirst)),
+                  PrimaryButton(text: 'BİTİR', onPressed: () => Navigator.popUntil(context, (r) => r.isFirst)),
                 ],
               ),
             ),
