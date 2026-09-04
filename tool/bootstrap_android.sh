@@ -9,7 +9,7 @@ if ! command -v flutter >/dev/null 2>&1; then
 fi
 
 if [ ! -d android ]; then
-  flutter create --platforms=android --project-name vision_sen_app --org com.visionsen .
+  flutter create --platforms=android --project-name visionsen_setup --org com.visionsen .
 fi
 
 MANIFEST="android/app/src/main/AndroidManifest.xml"

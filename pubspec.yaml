@@ -1,7 +1,7 @@
 name: visionsen_setup
 publish_to: 'none'
 description: VISION­SEN ESP32 BLE Device Setup
-version: 1.2.6+9
+version: 1.2.7+10
 environment:
   sdk: '>=3.5.0 <4.0.0'
   flutter: '>=3.24.0'

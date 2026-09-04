@@ -23,6 +23,58 @@ class _AdvertisementProtocolInfo {
 class BleService {
   static const bool debugShowAllDevices = false;
 
+  /// Bluetooth adaptörünün güncel durumunu döndürür. Uygulama bu metodu
+  /// çağırırken Bluetooth'u AÇMAZ; yalnızca mevcut durumu okur.
+  Future<BluetoothAdapterState> getAdapterState() async {
+    try {
+      if (!await FlutterBluePlus.isSupported) {
+        return BluetoothAdapterState.unavailable;
+      }
+
+      var state = FlutterBluePlus.adapterStateNow;
+      if (state == BluetoothAdapterState.unknown ||
+          state == BluetoothAdapterState.turningOn ||
+          state == BluetoothAdapterState.turningOff) {
+        try {
+          state = await FlutterBluePlus.adapterState
+              .where((value) =>
+                  value != BluetoothAdapterState.unknown &&
+                  value != BluetoothAdapterState.turningOn &&
+                  value != BluetoothAdapterState.turningOff)
+              .first
+              .timeout(const Duration(seconds: 3));
+        } catch (_) {
+          state = FlutterBluePlus.adapterStateNow;
+        }
+      }
+      return state;
+    } catch (_) {
+      return BluetoothAdapterState.unavailable;
+    }
+  }
+
+  /// Yalnızca UI katmanı kullanıcıdan açık onay aldıktan SONRA çağrılmalıdır.
+  /// Android'de gerekli CONNECT iznini ister ve ardından sistemin Bluetooth açma
+  /// diyaloğunu başlatır. Kullanıcı sistem isteğini de reddederse false döner.
+  Future<bool> enableBluetoothAfterUserConsent() async {
+    if (await getAdapterState() == BluetoothAdapterState.on) return true;
+    if (!Platform.isAndroid) return false;
+
+    final connectPermission = await Permission.bluetoothConnect.request();
+    if (!connectPermission.isGranted) return false;
+
+    try {
+      await FlutterBluePlus.turnOn();
+      await FlutterBluePlus.adapterState
+          .where((state) => state == BluetoothAdapterState.on)
+          .first
+          .timeout(const Duration(seconds: 12));
+      return true;
+    } catch (_) {
+      return FlutterBluePlus.adapterStateNow == BluetoothAdapterState.on;
+    }
+  }
+
   BluetoothDevice? _device;
   BluetoothCharacteristic? _configChar;
   BluetoothCharacteristic? _statusChar;
@@ -56,6 +108,7 @@ class BleService {
   }
 
   Future<List<BleDeviceModel>> scan() async {
+    if (await getAdapterState() != BluetoothAdapterState.on) return [];
     if (!await _ensurePermissions()) return [];
     final found = <String, ScanResult>{};
     final sub = FlutterBluePlus.scanResults.listen((results) {

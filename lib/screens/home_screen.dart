@@ -1,11 +1,140 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_blue_plus/flutter_blue_plus.dart';
 import '../services/ble_service.dart';
 import '../theme/app_theme.dart';
 import '../widgets/app_shell.dart';
 import 'scan_screen.dart';
 
-class HomeScreen extends StatelessWidget {
+class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
+
+  @override
+  State<HomeScreen> createState() => _HomeScreenState();
+}
+
+class _HomeScreenState extends State<HomeScreen> {
+  final BleService _ble = BleService();
+  bool _bluetoothActionRunning = false;
+  bool _startupCheckDone = false;
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) => _checkBluetoothOnStartup());
+  }
+
+  Future<void> _checkBluetoothOnStartup() async {
+    if (!mounted || _startupCheckDone) return;
+    _startupCheckDone = true;
+
+    final state = await _ble.getAdapterState();
+    if (!mounted || state == BluetoothAdapterState.on) return;
+
+    if (state == BluetoothAdapterState.unavailable) {
+      await _showBluetoothUnavailable();
+      return;
+    }
+
+    // Uygulama Bluetooth'u kendi kararıyla açmaz. Önce kullanıcıdan açık onay
+    // alınır; ancak onaydan sonra Android'in sistem Bluetooth açma isteği başlar.
+    await _requestBluetoothConsent();
+  }
+
+  Future<bool> _requestBluetoothConsent() async {
+    if (_bluetoothActionRunning) return false;
+
+    final state = await _ble.getAdapterState();
+    if (!mounted) return false;
+    if (state == BluetoothAdapterState.on) return true;
+    if (state == BluetoothAdapterState.unavailable) {
+      await _showBluetoothUnavailable();
+      return false;
+    }
+
+    final approved = await showDialog<bool>(
+          context: context,
+          barrierDismissible: false,
+          builder: (dialogContext) => AlertDialog(
+            title: const Row(
+              children: [
+                Icon(Icons.bluetooth, color: AppTheme.cyan),
+                SizedBox(width: 10),
+                Expanded(child: Text('Bluetooth kapalı')),
+              ],
+            ),
+            content: const Text(
+              'VisionSen cihazlarını bulmak ve kurmak için telefonunuzun Bluetooth bağlantısının açık olması gerekir.\n\nBluetooth açılsın mı?',
+              style: TextStyle(height: 1.45),
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.of(dialogContext).pop(false),
+                child: const Text('ŞİMDİ DEĞİL'),
+              ),
+              FilledButton.icon(
+                onPressed: () => Navigator.of(dialogContext).pop(true),
+                icon: const Icon(Icons.bluetooth),
+                label: const Text('BLUETOOTH\'U AÇ'),
+              ),
+            ],
+          ),
+        ) ??
+        false;
+
+    if (!approved || !mounted) return false;
+
+    setState(() => _bluetoothActionRunning = true);
+    final enabled = await _ble.enableBluetoothAfterUserConsent();
+    if (!mounted) return enabled;
+    setState(() => _bluetoothActionRunning = false);
+
+    if (!enabled) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Bluetooth açılmadı. Devam etmek için Bluetooth erişimine izin verin ve açma isteğini onaylayın.'),
+        ),
+      );
+    }
+    return enabled;
+  }
+
+  Future<void> _showBluetoothUnavailable() async {
+    if (!mounted) return;
+    await showDialog<void>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Bluetooth kullanılamıyor'),
+        content: const Text('Bu cihazda Bluetooth kullanılamıyor veya sistem tarafından erişime kapalı.'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(dialogContext).pop(),
+            child: const Text('TAMAM'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _startSetup() async {
+    if (_bluetoothActionRunning) return;
+
+    var state = await _ble.getAdapterState();
+    if (!mounted) return;
+
+    if (state != BluetoothAdapterState.on) {
+      final enabled = await _requestBluetoothConsent();
+      if (!enabled || !mounted) return;
+      state = await _ble.getAdapterState();
+      if (state != BluetoothAdapterState.on) return;
+    }
+
+    if (!mounted) return;
+    await Navigator.push(
+      context,
+      MaterialPageRoute(builder: (_) => ScanScreen(ble: _ble)),
+    );
+  }
+
   @override
   Widget build(BuildContext context) => Scaffold(
         body: AppBackground(
@@ -37,14 +166,14 @@ class HomeScreen extends StatelessWidget {
                 ),
                 const SizedBox(height: 38),
                 PrimaryButton(
-                  text: 'BAŞLAYALIM',
-                  icon: Icons.bluetooth_searching,
-                  onPressed: () => Navigator.push(context, MaterialPageRoute(builder: (_) => ScanScreen(ble: BleService()))),
+                  text: _bluetoothActionRunning ? 'BLUETOOTH AÇILIYOR...' : 'BAŞLAYALIM',
+                  icon: _bluetoothActionRunning ? Icons.hourglass_top : Icons.bluetooth_searching,
+                  onPressed: _bluetoothActionRunning ? null : _startSetup,
                 ),
                 const Spacer(flex: 3),
                 const Text('BLE DEVICE CONFIGURATION', style: TextStyle(color: AppTheme.muted, fontSize: 10, letterSpacing: 1.3)),
                 const SizedBox(height: 6),
-                const Text('v1.2.6', style: TextStyle(color: AppTheme.muted, fontSize: 11)),
+                const Text('v1.2.7', style: TextStyle(color: AppTheme.muted, fontSize: 11)),
                 const SizedBox(height: 18),
               ],
             ),
