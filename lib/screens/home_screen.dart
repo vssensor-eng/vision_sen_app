@@ -173,7 +173,7 @@ class _HomeScreenState extends State<HomeScreen> {
                 const Spacer(flex: 3),
                 const Text('BLE DEVICE CONFIGURATION', style: TextStyle(color: AppTheme.muted, fontSize: 10, letterSpacing: 1.3)),
                 const SizedBox(height: 6),
-                const Text('v1.2.7', style: TextStyle(color: AppTheme.muted, fontSize: 11)),
+                const Text('v1.2.9', style: TextStyle(color: AppTheme.muted, fontSize: 11)),
                 const SizedBox(height: 18),
               ],
             ),

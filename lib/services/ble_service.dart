@@ -81,8 +81,12 @@ class BleService {
   BluetoothCharacteristic? _infoChar;
   int? _advertisedProtocolVersion;
 
-  /// Cihazın reddettiği son hata kodu.
+  /// Cihazın reddettiği son provisioning hata kodu.
   String? lastError;
+
+  /// Son BLE taramasının kullanıcıya gösterilebilecek hata nedeni. null ise
+  /// tarama teknik olarak tamamlanmıştır; sonuç listesi ayrıca boş olabilir.
+  String? lastScanError;
 
   Future<bool> _ensurePermissions() async {
     final statuses = await [
@@ -107,39 +111,18 @@ class BleService {
     return null;
   }
 
-  Future<List<BleDeviceModel>> scan() async {
-    if (await getAdapterState() != BluetoothAdapterState.on) return [];
-    if (!await _ensurePermissions()) return [];
-    final found = <String, ScanResult>{};
-    final sub = FlutterBluePlus.scanResults.listen((results) {
-      for (final r in results) {
-        if (debugShowAllDevices) {
-          found[r.device.remoteId.str] = r;
-          continue;
-        }
-        final hasService = r.advertisementData.serviceUuids.contains(_BleUuids.service);
-        final name = r.device.platformName.isNotEmpty ? r.device.platformName : r.advertisementData.advName;
-        final nameMatch = name.startsWith('VISIONSEN-ESP-');
-        if (hasService || nameMatch) found[r.device.remoteId.str] = r;
-      }
-    });
+  bool _hasVisionSenManufacturerData(AdvertisementData data) =>
+      _protocolFromAdvertisement(data) != null;
 
-    try {
-      await FlutterBluePlus.startScan(
-        withServices: debugShowAllDevices ? [] : [_BleUuids.service],
-        timeout: const Duration(seconds: 6),
-      );
-      await FlutterBluePlus.isScanning.where((s) => s == false).first;
-    } finally {
-      await sub.cancel();
-      if (FlutterBluePlus.isScanningNow) await FlutterBluePlus.stopScan();
-    }
-
-    return found.values.map((r) {
+  List<BleDeviceModel> _modelsFromScanResults(Iterable<ScanResult> results) {
+    return results.map((r) {
       String name = r.device.platformName;
       if (name.isEmpty) name = r.advertisementData.advName;
       if (name.isEmpty) name = '(isimsiz) ${r.device.remoteId.str}';
-      final isVisionSen = r.advertisementData.serviceUuids.contains(_BleUuids.service) || name.startsWith('VISIONSEN-ESP-');
+      final isVisionSen =
+          r.advertisementData.serviceUuids.contains(_BleUuids.service) ||
+          name.startsWith('VISIONSEN-ESP-') ||
+          _hasVisionSenManufacturerData(r.advertisementData);
       final protocolInfo = isVisionSen ? _protocolFromAdvertisement(r.advertisementData) : null;
       return BleDeviceModel(
         id: r.device.remoteId.str,
@@ -151,6 +134,119 @@ class BleService {
         protocolVersion: protocolInfo?.protocolVersion,
       );
     }).toList();
+  }
+
+  bool _scanMetadataImproved(ScanResult? previous, ScanResult current) {
+    if (previous == null) return true;
+
+    final oldProtocol = _protocolFromAdvertisement(previous.advertisementData);
+    final newProtocol = _protocolFromAdvertisement(current.advertisementData);
+    if (oldProtocol == null && newProtocol != null) return true;
+    if (oldProtocol != null && newProtocol != null &&
+        (oldProtocol.protocolVersion != newProtocol.protocolVersion ||
+            oldProtocol.configured != newProtocol.configured)) {
+      return true;
+    }
+
+    final oldName = previous.device.platformName.isNotEmpty
+        ? previous.device.platformName
+        : previous.advertisementData.advName;
+    final newName = current.device.platformName.isNotEmpty
+        ? current.device.platformName
+        : current.advertisementData.advName;
+    if (oldName.isEmpty && newName.isNotEmpty) return true;
+
+    final oldHasService = previous.advertisementData.serviceUuids.contains(_BleUuids.service);
+    final newHasService = current.advertisementData.serviceUuids.contains(_BleUuids.service);
+    return !oldHasService && newHasService;
+  }
+
+  /// VisionSen cihazlarını [timeout] boyunca tarar. Bulunan cihazlar tarama
+  /// tamamlanmadan [onUpdate] ile anında UI'a bildirilir. Tarama sırasında aynı
+  /// cihazın RSSI değişimleri gereksiz rebuild oluşturmasın diye yalnızca yeni
+  /// cihaz veya daha zengin kimlik/protokol bilgisi geldiğinde ara güncelleme
+  /// gönderilir. Nihai liste dönüş değerinde en güncel RSSI korunur.
+  Future<List<BleDeviceModel>> scan({
+    Duration timeout = const Duration(seconds: 60),
+    void Function(List<BleDeviceModel> devices)? onUpdate,
+  }) async {
+    lastScanError = null;
+
+    if (await getAdapterState() != BluetoothAdapterState.on) {
+      lastScanError = 'Bluetooth kapalı. Bluetooth’u açıp tekrar deneyin.';
+      return [];
+    }
+    if (!await _ensurePermissions()) {
+      lastScanError =
+          'Bluetooth tarama izni verilmedi. Uygulama izinlerinden Yakındaki cihazlar/Bluetooth erişimine izin verin.';
+      return [];
+    }
+
+    // Önceki ekrandan/denemeden açık kalan bir tarama varsa yeni 60 sn'lik
+    // pencereyi temiz başlatmak için kapatılır.
+    if (FlutterBluePlus.isScanningNow) {
+      try {
+        await FlutterBluePlus.stopScan();
+      } catch (_) {}
+    }
+
+    final found = <String, ScanResult>{};
+    final sub = FlutterBluePlus.scanResults.listen((results) {
+      var shouldNotify = false;
+      for (final r in results) {
+        if (debugShowAllDevices) {
+          final id = r.device.remoteId.str;
+          if (_scanMetadataImproved(found[id], r)) shouldNotify = true;
+          found[id] = r;
+          continue;
+        }
+
+        final hasService = r.advertisementData.serviceUuids.contains(_BleUuids.service);
+        final name = r.device.platformName.isNotEmpty
+            ? r.device.platformName
+            : r.advertisementData.advName;
+        final nameMatch = name.startsWith('VISIONSEN-ESP-');
+        final manufacturerMatch = _hasVisionSenManufacturerData(r.advertisementData);
+
+        // Android tarafındaki servis UUID tarama filtresine güvenmiyoruz. Tüm
+        // reklamlar alınır ve VisionSen işaretleri uygulama içinde süzülür.
+        if (hasService || nameMatch || manufacturerMatch) {
+          final id = r.device.remoteId.str;
+          if (_scanMetadataImproved(found[id], r)) shouldNotify = true;
+          found[id] = r;
+        }
+      }
+
+      if (shouldNotify && onUpdate != null) {
+        onUpdate(_modelsFromScanResults(found.values));
+      }
+    });
+
+    try {
+      await FlutterBluePlus.startScan(timeout: timeout);
+      await FlutterBluePlus.isScanning.where((s) => s == false).first;
+    } catch (_) {
+      lastScanError =
+          'Bluetooth taraması başlatılamadı. Bluetooth/izin durumunu kontrol edip tekrar deneyin.';
+    } finally {
+      await sub.cancel();
+      if (FlutterBluePlus.isScanningNow) {
+        try {
+          await FlutterBluePlus.stopScan();
+        } catch (_) {}
+      }
+    }
+
+    return _modelsFromScanResults(found.values);
+  }
+
+  /// Kullanıcı tarama sürerken bir cihaz seçtiğinde çağrılır. Devam eden tarama
+  /// hemen durdurulur; böylece bağlantı kurulurken arka planda BLE scan çalışmaz.
+  Future<void> stopScan() async {
+    if (!FlutterBluePlus.isScanningNow) return;
+    try {
+      await FlutterBluePlus.stopScan();
+    } catch (_) {}
   }
 
   /// Bağlanır ve Android'de bonding'i önden başlatır. Firmware'in INFO/CONFIG
