@@ -36,3 +36,30 @@ echo "Android platform dosyaları hazır."
 
 # flutter create tarafindan olusturulan ornek test dosyasini kaldir
 rm -f test/widget_test.dart
+
+# Toolchain: compileSdk 35, AGP ve Kotlin surumlerini yukselt
+python3 - <<'PYEOF'
+import re
+from pathlib import Path
+
+for name in ('android/app/build.gradle', 'android/app/build.gradle.kts'):
+    p = Path(name)
+    if p.exists():
+        t = p.read_text()
+        t = re.sub(r'compileSdk\s*=?\s*[^\n]+', 'compileSdk = 35', t, count=1)
+        p.write_text(t)
+
+for name in ('android/settings.gradle', 'android/settings.gradle.kts'):
+    p = Path(name)
+    if p.exists():
+        t = p.read_text()
+        t = re.sub(r'(id\s+["\']com\.android\.application["\']\s+version\s+)["\'][^"\']+["\']', r'\1"8.6.0"', t)
+        t = re.sub(r'(id\s+["\']org\.jetbrains\.kotlin\.android["\']\s+version\s+)["\'][^"\']+["\']', r'\1"1.9.24"', t)
+        p.write_text(t)
+
+p = Path('android/build.gradle')
+if p.exists():
+    t = p.read_text()
+    t = re.sub(r"ext\.kotlin_version\s*=\s*['\"][^'\"]+['\"]", "ext.kotlin_version = '1.9.24'", t)
+    p.write_text(t)
+PYEOF
