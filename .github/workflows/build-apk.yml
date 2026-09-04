@@ -1,0 +1,158 @@
+name: Build Android
+
+on:
+  push:
+    branches: [ main, master ]
+  workflow_dispatch: {}
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.24.0'
+          channel: stable
+          cache: true
+
+      - name: Prepare Android platform
+        run: bash tool/bootstrap_android.sh
+
+      - name: Install dependencies
+        run: flutter pub get
+
+      - name: Static analysis
+        run: flutter analyze
+
+      - name: Unit tests
+        run: flutter test
+
+      # Kalıcı production signing için şu repository secrets değerlerini tanımlayın:
+      # ANDROID_KEYSTORE_BASE64, ANDROID_KEY_ALIAS, ANDROID_STORE_PASSWORD,
+      # ANDROID_KEY_PASSWORD. Secrets yoksa workflow CI amaçlı release APK üretir;
+      # bunu kalıcı production/update imzası olarak kullanmayın.
+      - name: Configure production signing
+        env:
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_STORE_PASSWORD: ${{ secrets.ANDROID_STORE_PASSWORD }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          if [ -z "$ANDROID_KEYSTORE_BASE64" ] || [ -z "$ANDROID_KEY_ALIAS" ] || [ -z "$ANDROID_STORE_PASSWORD" ] || [ -z "$ANDROID_KEY_PASSWORD" ]; then
+            echo "PRODUCTION_SIGNING=false" >> "$GITHUB_ENV"
+            echo "Production signing secrets are not configured; CI APK only."
+            exit 0
+          fi
+
+          echo "$ANDROID_KEYSTORE_BASE64" | base64 --decode > android/app/upload-keystore.jks
+          cat > android/key.properties <<KEYEOF
+          storePassword=$ANDROID_STORE_PASSWORD
+          keyPassword=$ANDROID_KEY_PASSWORD
+          keyAlias=$ANDROID_KEY_ALIAS
+          storeFile=upload-keystore.jks
+          KEYEOF
+
+          python3 - <<'PYEOF'
+          from pathlib import Path
+
+          groovy = Path('android/app/build.gradle')
+          kotlin = Path('android/app/build.gradle.kts')
+
+          if groovy.exists():
+              text = groovy.read_text()
+              if 'keystorePropertiesFile' not in text:
+                  prefix = (
+                      "def keystoreProperties = new Properties()\n"
+                      "def keystorePropertiesFile = rootProject.file('key.properties')\n"
+                      "if (keystorePropertiesFile.exists()) {\n"
+                      "    keystoreProperties.load(new FileInputStream(keystorePropertiesFile))\n"
+                      "}\n\n"
+                  )
+                  text = prefix + text
+              if 'signingConfigs {' not in text:
+                  marker = '    buildTypes {'
+                  block = (
+                      "    signingConfigs {\n"
+                      "        release {\n"
+                      "            keyAlias keystoreProperties['keyAlias']\n"
+                      "            keyPassword keystoreProperties['keyPassword']\n"
+                      "            storeFile keystoreProperties['storeFile'] ? file(keystoreProperties['storeFile']) : null\n"
+                      "            storePassword keystoreProperties['storePassword']\n"
+                      "        }\n"
+                      "    }\n\n"
+                  )
+                  if marker not in text:
+                      raise SystemExit('Groovy buildTypes block not found')
+                  text = text.replace(marker, block + marker, 1)
+              text = text.replace('signingConfig = signingConfigs.debug', 'signingConfig = signingConfigs.release')
+              text = text.replace('signingConfig signingConfigs.debug', 'signingConfig signingConfigs.release')
+              groovy.write_text(text)
+
+          elif kotlin.exists():
+              text = kotlin.read_text()
+              if 'keystorePropertiesFile' not in text:
+                  prefix = (
+                      'import java.util.Properties\n'
+                      'import java.io.FileInputStream\n\n'
+                      'val keystoreProperties = Properties()\n'
+                      'val keystorePropertiesFile = rootProject.file("key.properties")\n'
+                      'if (keystorePropertiesFile.exists()) {\n'
+                      '    keystoreProperties.load(FileInputStream(keystorePropertiesFile))\n'
+                      '}\n\n'
+                  )
+                  text = prefix + text
+              if 'create("release")' not in text:
+                  marker = '    buildTypes {'
+                  block = (
+                      '    signingConfigs {\n'
+                      '        create("release") {\n'
+                      '            keyAlias = keystoreProperties["keyAlias"] as String\n'
+                      '            keyPassword = keystoreProperties["keyPassword"] as String\n'
+                      '            storeFile = keystoreProperties["storeFile"]?.let { file(it) }\n'
+                      '            storePassword = keystoreProperties["storePassword"] as String\n'
+                      '        }\n'
+                      '    }\n\n'
+                  )
+                  if marker not in text:
+                      raise SystemExit('Kotlin buildTypes block not found')
+                  text = text.replace(marker, block + marker, 1)
+              text = text.replace(
+                  'signingConfig = signingConfigs.getByName("debug")',
+                  'signingConfig = signingConfigs.getByName("release")',
+              )
+              kotlin.write_text(text)
+          else:
+              raise SystemExit('Neither android/app/build.gradle nor build.gradle.kts exists')
+          PYEOF
+
+          echo "PRODUCTION_SIGNING=true" >> "$GITHUB_ENV"
+
+      - name: Build release APK
+        run: flutter build apk --release
+
+      - name: Build signed App Bundle
+        if: env.PRODUCTION_SIGNING == 'true'
+        run: flutter build appbundle --release
+
+      - name: Upload APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.PRODUCTION_SIGNING == 'true' && 'visionsen-release-apk' || 'visionsen-ci-apk' }}
+          path: build/app/outputs/flutter-apk/app-release.apk
+
+      - name: Upload signed AAB artifact
+        if: env.PRODUCTION_SIGNING == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: visionsen-release-aab
+          path: build/app/outputs/bundle/release/app-release.aab

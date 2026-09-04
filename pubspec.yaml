@@ -1,0 +1,19 @@
+name: visionsen_setup
+publish_to: 'none'
+description: VISION­SEN ESP32 BLE Device Setup
+version: 1.2.6+9
+environment:
+  sdk: '>=3.5.0 <4.0.0'
+  flutter: '>=3.24.0'
+dependencies:
+  flutter:
+    sdk: flutter
+  cupertino_icons: 1.0.8
+  flutter_blue_plus: 1.35.5
+  permission_handler: 12.0.1
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: 5.0.0
+flutter:
+  uses-material-design: true
