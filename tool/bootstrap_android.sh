@@ -33,3 +33,6 @@ open(path, 'w', encoding='utf-8').write(content)
 PYEOF
 
 echo "Android platform dosyaları hazır."
+
+# flutter create tarafindan olusturulan ornek test dosyasini kaldir
+rm -f test/widget_test.dart
