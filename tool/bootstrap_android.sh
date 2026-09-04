@@ -63,3 +63,15 @@ if p.exists():
     t = re.sub(r"ext\.kotlin_version\s*=\s*['\"][^'\"]+['\"]", "ext.kotlin_version = '1.9.24'", t)
     p.write_text(t)
 PYEOF
+
+# Gradle wrapper surumunu AGP 8.6 ile uyumlu hale getir
+python3 - <<'PYEOF'
+import re
+from pathlib import Path
+
+p = Path('android/gradle/wrapper/gradle-wrapper.properties')
+if p.exists():
+    t = p.read_text()
+    t = re.sub(r'distributionUrl=.*', 'distributionUrl=https\\\\://services.gradle.org/distributions/gradle-8.9-all.zip', t)
+    p.write_text(t)
+PYEOF
