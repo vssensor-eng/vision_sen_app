@@ -37,27 +37,38 @@ class _HistoryScreenState extends State<HistoryScreen> {
     }
   }
 
+  String _rangeLabel(int value) {
+    switch (value) {
+      case 1: return '1 Sa';
+      case 6: return '6 Sa';
+      case 24: return '24 Sa';
+      case 168: return '7 Gün';
+      case 720: return '30 Gün';
+      case 2160: return '90 Gün';
+      default: return '$value Sa';
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final metric = widget.sensor['metric']?.toString() ?? '';
+    final catalog = widget.session.metricCatalog;
+    final label = widget.sensor['name']?.toString() ?? metricLabel(metric, catalog);
     return Scaffold(
       body: AppBackground(
         child: ListView(
           padding: const EdgeInsets.fromLTRB(18, 6, 18, 30),
           children: [
-            MobileTopBar(title: metricLabel(metric), subtitle: 'Sensör geçmişi', actions: [IconButton(onPressed: () => Navigator.pop(context), icon: const Icon(Icons.close))]),
-            Row(
+            MobileTopBar(title: label, subtitle: 'Sensör geçmişi', actions: [IconButton(onPressed: () => Navigator.pop(context), icon: const Icon(Icons.close))]),
+            Wrap(
+              spacing: 6,
+              runSpacing: 6,
               children: [
-                for (final option in const [1, 6, 24, 168])
-                  Expanded(
-                    child: Padding(
-                      padding: const EdgeInsets.symmetric(horizontal: 3),
-                      child: ChoiceChip(
-                        selected: hours == option,
-                        label: Text(option == 168 ? '7 Gün' : '$option Sa'),
-                        onSelected: (_) { setState(() => hours = option); _load(); },
-                      ),
-                    ),
+                for (final option in const [1, 6, 24, 168, 720, 2160])
+                  ChoiceChip(
+                    selected: hours == option,
+                    label: Text(_rangeLabel(option)),
+                    onSelected: (_) { setState(() => hours = option); _load(); },
                   ),
               ],
             ),
@@ -80,7 +91,7 @@ class _HistoryScreenState extends State<HistoryScreen> {
                 mainAxisAlignment: MainAxisAlignment.spaceBetween,
                 children: [
                   const Text('Son değer', style: TextStyle(color: AppTheme.muted)),
-                  Text(formatValue(widget.sensor['latest_value'], metricUnit(metric)), style: const TextStyle(fontSize: 20, fontWeight: FontWeight.w900)),
+                  Text(formatValue(widget.sensor['latest_value'], metricUnit(metric, catalog)), style: const TextStyle(fontSize: 20, fontWeight: FontWeight.w900)),
                 ],
               ),
             ),
