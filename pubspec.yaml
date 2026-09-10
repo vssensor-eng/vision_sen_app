@@ -1,7 +1,7 @@
 name: visionsen_setup
 publish_to: 'none'
 description: VisionSen mobil izleme ve login korumalı ESP32 BLE cihaz yapılandırma
-version: 1.4.1+14
+version: 1.4.2+15
 environment:
   sdk: '>=3.5.0 <4.0.0'
   flutter: '>=3.24.0'
@@ -9,7 +9,7 @@ dependencies:
   flutter:
     sdk: flutter
   cupertino_icons: 1.0.8
-  flutter_blue_plus: 1.35.5
+  flutter_blue_plus: 1.35.8
   permission_handler: 12.0.1
   http: 1.2.2
   flutter_secure_storage: 9.2.2
