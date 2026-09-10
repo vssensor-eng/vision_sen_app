@@ -18,6 +18,7 @@ class DashboardScreen extends StatelessWidget {
             final devices = session.devices;
             final sensors = session.sensors;
             final company = session.company;
+            final catalog = session.metricCatalog;
             final offlineMinutes = int.tryParse('${company['offline_minutes'] ?? 3}') ?? 3;
             final buildings = locations.where((e) => e['type'] == 'building').length;
             final rooms = locations.where((e) => e['type'] == 'room').length;
@@ -105,12 +106,12 @@ class DashboardScreen extends StatelessWidget {
                                       child: Column(
                                         crossAxisAlignment: CrossAxisAlignment.start,
                                         children: [
-                                          Text(metricLabel(metric), style: const TextStyle(fontWeight: FontWeight.w800)),
+                                          Text(sensor['name']?.toString() ?? metricLabel(metric, catalog), style: const TextStyle(fontWeight: FontWeight.w800)),
                                           Text(sensor['channel']?.toString() ?? '', style: const TextStyle(color: AppTheme.muted, fontSize: 11)),
                                         ],
                                       ),
                                     ),
-                                    Text(formatValue(sensor['latest_value'], metricUnit(metric)), style: const TextStyle(fontSize: 17, fontWeight: FontWeight.w900)),
+                                    Text(formatValue(sensor['latest_value'], metricUnit(metric, catalog)), style: const TextStyle(fontSize: 17, fontWeight: FontWeight.w900)),
                                   ],
                                 ),
                               ),
