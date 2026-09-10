@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 class VisionSenCompatibility {
   static const String environmentMonitor = 'environment_monitor';
 
@@ -49,10 +51,8 @@ class BleDeviceModel {
 
 class DeviceConfig {
   static const placeholderSerial = 'ESP-000125';
+  static const int maxBleDeviceNameBytes = 28;
 
-  /// Bu alanların hiçbiri uydurma varsayılan içermez; hepsi kullanıcı tarafından
-  /// doldurulur veya cihazdan okunur. Boş bırakılan alanlar cihaz tarafında
-  /// reddedilir.
   String deviceName = '';
   String serial = '';
   String ssid = '';
@@ -61,36 +61,44 @@ class DeviceConfig {
   String serverUrl = '';
   String timezone = '(UTC+03:00) İstanbul';
 
-  /// VerifyScreen'de cihazın INFO karakteristiğinden okunan "configured"
-  /// alanına göre doldurulur. true ise cihaz DAHA ÖNCE kurulmuştur ve
-  /// firmware, herhangi bir ayarı kabul etmeden önce cihazda KAYITLI olan
-  /// mevcut firma anahtarını (auth_key) ister — bkz. currentCompanyKey.
   bool deviceAlreadyConfigured = false;
-
-  /// Yalnızca DAHA ÖNCE kurulmuş bir cihazı güncellerken doldurulur: cihazda
-  /// hâlâ kayıtlı olan (DEĞİŞTİRİLMEK istenen değil, MEVCUT) firma anahtarı.
-  /// Bu, `companyKey` alanından KASITLI olarak AYRIDIR — aksi halde kullanıcı
-  /// yeni bir anahtar girdiğinde kimlik doğrulaması kendi kendini geçersiz
-  /// kılar ve hiçbir ayar (WiFi/sunucu dahil) güncellenemez.
   String currentCompanyKey = '';
-
-  /// Kurulu cihazlarda false ise firma anahtarı değiştirilmez; mevcut anahtar
-  /// hem kimlik doğrulama hem de kaydedilecek değer olarak kullanılır.
   bool changeCompanyKey = false;
 
-  static const int minCompanyKeyLength = 6;
+  // Firmware isValidCompanyKey() ile aynı sınırlar.
+  static const int minCompanyKeyLength = 32;
   static const int maxCompanyKeyLength = 128;
   static final RegExp _companyKeyPattern = RegExp(r'^[A-Za-z0-9._:-]+$');
 
   String get effectiveCompanyKey =>
-      deviceAlreadyConfigured && !changeCompanyKey ? currentCompanyKey : companyKey;
+      deviceAlreadyConfigured && !changeCompanyKey
+          ? currentCompanyKey
+          : companyKey;
 
-  static String? validateCompanyKey(String value, {String label = 'Firma anahtarı'}) {
+  static String? validateCompanyKey(
+    String value, {
+    String label = 'Firma anahtarı',
+  }) {
     if (value.length < minCompanyKeyLength || value.length > maxCompanyKeyLength) {
       return '$label $minCompanyKeyLength-$maxCompanyKeyLength karakter olmalı (şu an ${value.length}).';
     }
     if (!_companyKeyPattern.hasMatch(value)) {
       return '$label yalnızca harf, rakam, nokta, alt çizgi, iki nokta ve tire içerebilir.';
+    }
+    return null;
+  }
+
+  static String? validateDeviceName(String value) {
+    final name = value.trim();
+    if (name.isEmpty) return 'Cihaz adı boş olamaz.';
+    final byteLength = utf8.encode(name).length;
+    if (byteLength > maxBleDeviceNameBytes) {
+      return 'Cihaz adı BLE için en fazla $maxBleDeviceNameBytes UTF-8 byte olabilir (şu an $byteLength byte).';
+    }
+    for (final rune in name.runes) {
+      if (rune < 0x20 || rune == 0x7F) {
+        return 'Cihaz adında kontrol karakteri kullanılamaz.';
+      }
     }
     return null;
   }
@@ -110,8 +118,12 @@ class DeviceConfig {
     if (uri == null || (uri.scheme != 'http' && uri.scheme != 'https')) {
       return 'Sunucu adresi http:// veya https:// ile başlamalı.';
     }
-    if (uri.host.isEmpty) return 'Sunucu adresinde geçerli bir alan adı veya IP bulunmalı.';
-    if (uri.userInfo.isNotEmpty) return 'Sunucu adresinde kullanıcı adı/şifre kullanılamaz.';
+    if (uri.host.isEmpty) {
+      return 'Sunucu adresinde geçerli bir alan adı veya IP bulunmalı.';
+    }
+    if (uri.userInfo.isNotEmpty) {
+      return 'Sunucu adresinde kullanıcı adı/şifre kullanılamaz.';
+    }
     if (uri.hasQuery) return 'Sunucu adresinde sorgu parametresi (?) kullanılamaz.';
     if (uri.fragment.isNotEmpty) return 'Sunucu adresinde # bölümü kullanılamaz.';
 
@@ -127,12 +139,17 @@ class DeviceConfig {
 
   /// Firmware'in doğruladığı kurallarla aynı kontroller.
   String? validate() {
+    final deviceNameError = validateDeviceName(deviceName);
+    if (deviceNameError != null) return deviceNameError;
+
     if (ssid.trim().isEmpty) return 'WiFi ağ adı (SSID) boş olamaz.';
     if (serial.trim().isEmpty) return 'Seri numarası boş olamaz.';
     if (isPlaceholderSerial(serial)) {
       return '$placeholderSerial örnek seri numarası kullanılamaz; gerçek cihaz seri numarasını girin.';
     }
-    if (serial.length > 64) return 'Seri numarası en fazla 64 karakter olabilir.';
+    if (serial.length > 64) {
+      return 'Seri numarası en fazla 64 karakter olabilir.';
+    }
     if (!RegExp(r'^[A-Za-z0-9_-]+$').hasMatch(serial)) {
       return 'Seri numarası yalnızca harf, rakam, tire ve alt çizgi içerebilir.';
     }
@@ -140,7 +157,10 @@ class DeviceConfig {
       if (currentCompanyKey.trim().isEmpty) {
         return 'Bu cihaz daha önce kurulmuş; cihazda kayıtlı MEVCUT firma anahtarını girmelisiniz.';
       }
-      final currentKeyError = validateCompanyKey(currentCompanyKey, label: 'Mevcut firma anahtarı');
+      final currentKeyError = validateCompanyKey(
+        currentCompanyKey,
+        label: 'Mevcut firma anahtarı',
+      );
       if (currentKeyError != null) return currentKeyError;
     }
 
