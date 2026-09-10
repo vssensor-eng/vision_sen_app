@@ -28,11 +28,12 @@ class DevicesScreen extends StatelessWidget {
                     title: 'Cihazlarım',
                     subtitle: '${devices.length} kayıtlı cihaz',
                     actions: [
-                      IconButton(
-                        tooltip: 'Web\'e cihaz ekle',
-                        onPressed: () => Navigator.push(context, MaterialPageRoute(builder: (_) => AddDeviceScreen(session: session))),
-                        icon: const Icon(Icons.add_circle_outline, color: AppTheme.cyan),
-                      ),
+                      if (session.canManage)
+                        IconButton(
+                          tooltip: 'Web\'e cihaz ekle',
+                          onPressed: () => Navigator.push(context, MaterialPageRoute(builder: (_) => AddDeviceScreen(session: session))),
+                          icon: const Icon(Icons.add_circle_outline, color: AppTheme.cyan),
+                        ),
                     ],
                   ),
                   Padding(
@@ -43,13 +44,19 @@ class DevicesScreen extends StatelessWidget {
                               children: [
                                 const Icon(Icons.sensors_off_outlined, size: 46, color: AppTheme.muted),
                                 const SizedBox(height: 12),
-                                const Text('Web hesabınızda cihaz bulunmuyor.', textAlign: TextAlign.center, style: TextStyle(color: AppTheme.muted)),
-                                const SizedBox(height: 16),
-                                PrimaryButton(
-                                  text: 'CİHAZ EKLE',
-                                  icon: Icons.add,
-                                  onPressed: () => Navigator.push(context, MaterialPageRoute(builder: (_) => AddDeviceScreen(session: session))),
+                                Text(
+                                  session.canManage ? 'Web hesabınızda cihaz bulunmuyor.' : 'Web hesabınızda görüntülenecek cihaz bulunmuyor.',
+                                  textAlign: TextAlign.center,
+                                  style: const TextStyle(color: AppTheme.muted),
                                 ),
+                                if (session.canManage) ...[
+                                  const SizedBox(height: 16),
+                                  PrimaryButton(
+                                    text: 'CİHAZ EKLE',
+                                    icon: Icons.add,
+                                    onPressed: () => Navigator.push(context, MaterialPageRoute(builder: (_) => AddDeviceScreen(session: session))),
+                                  ),
+                                ],
                               ],
                             ),
                           )
