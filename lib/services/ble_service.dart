@@ -92,7 +92,6 @@ class BleService {
     final statuses = await [
       Permission.bluetoothScan,
       Permission.bluetoothConnect,
-      Permission.locationWhenInUse,
     ].request();
     return statuses[Permission.bluetoothScan]?.isGranted == true &&
         statuses[Permission.bluetoothConnect]?.isGranted == true;
