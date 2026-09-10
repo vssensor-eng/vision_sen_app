@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+
 import '../../services/app_session.dart';
 import '../../theme/app_theme.dart';
 import '../../widgets/app_shell.dart';
@@ -8,6 +9,267 @@ import 'device_editor_screen.dart';
 import 'mobile_widgets.dart';
 import 'sensor_editor_screen.dart';
 
-class DevicesScreen extends StatelessWidget{final AppSession session;const DevicesScreen({super.key,required this.session});
-Future<void> _action(BuildContext c,String action,Map<String,dynamic>d)async{if(action=='edit'){await Navigator.push(c,MaterialPageRoute(builder:(_)=>DeviceEditorScreen(session:session,device:d)));return;}if(action=='sensor'){await Navigator.push(c,MaterialPageRoute(builder:(_)=>SensorEditorScreen(session:session,device:d)));return;}if(action=='delete'){if(!await confirmDelete(c,'Cihaz silinsin mi?','Cihaz kalıcı silinir. Cihaza bağlı sensör varsa önce sensörleri silmeniz gerekir. Ölçüm geçmişi de cihaz silindiğinde kaldırılır.'))return;final ok=await session.deleteDevice(int.parse('${d['id']}'));if(c.mounted)showSessionMessage(c,ok?'Cihaz silindi.':session.error??'Cihaz silinemedi.');}}
-@override Widget build(BuildContext context)=>AppBackground(child:AnimatedBuilder(animation:session,builder:(context,_){final devices=session.devices,offline=int.tryParse('${session.company['offline_minutes']??3}')??3;return RefreshIndicator(onRefresh:session.refresh,child:ListView(physics:const AlwaysScrollableScrollPhysics(),padding:const EdgeInsets.only(bottom:100),children:[MobileTopBar(title:'Cihazlarım',subtitle:'${devices.length} kayıtlı cihaz',actions:[if(session.canManage)IconButton(tooltip:'Cihaz ekle',onPressed:()=>Navigator.push(context,MaterialPageRoute(builder:(_)=>AddDeviceScreen(session:session))),icon:const Icon(Icons.add_circle_outline,color:AppTheme.cyan))]),Padding(padding:const EdgeInsets.symmetric(horizontal:18),child:devices.isEmpty?Panel(child:Column(children:[const Icon(Icons.sensors_off_outlined,size:46,color:AppTheme.muted),const SizedBox(height:12),const Text('Kayıtlı cihaz bulunmuyor.',style:TextStyle(color:AppTheme.muted)),if(session.canManage)...[const SizedBox(height:16),PrimaryButton(text:'CİHAZ EKLE',icon:Icons.add,onPressed:()=>Navigator.push(context,MaterialPageRoute(builder:(_)=>AddDeviceScreen(session:session)))]])):Column(children:devices.map((d){final online=isOnline(d,offlineMinutes:offline),count=session.sensors.where((s)=>'${s['device_id']}'=='${d['id']}').length,path=locationPath(session.locations,d['location_id']);return Padding(padding:const EdgeInsets.only(bottom:10),child:Panel(padding:EdgeInsets.zero,child:ListTile(contentPadding:const EdgeInsets.fromLTRB(14,9,8,9),leading:Container(width:48,height:48,decoration:BoxDecoration(color:AppTheme.panel2,borderRadius:BorderRadius.circular(14)),child:Icon(Icons.memory,color:online?AppTheme.green:AppTheme.cyan)),title:Row(children:[Expanded(child:Text(d['name']?.toString()??d['code']?.toString()??'Cihaz',style:const TextStyle(fontWeight:FontWeight.w900))),Container(padding:const EdgeInsets.symmetric(horizontal:7,vertical:3),decoration:BoxDecoration(color:(online?AppTheme.green:const Color(0xFFFF6B6B)).withOpacity(.13),borderRadius:BorderRadius.circular(20)),child:Text(online?'Çevrimiçi':'Çevrimdışı',style:TextStyle(color:online?AppTheme.green:const Color(0xFFFF6B6B),fontSize:9,fontWeight:FontWeight.w800)))]),subtitle:Padding(padding:const EdgeInsets.only(top:5),child:Text('${path.isEmpty?'Konum yok':path} • $count sensör • ${ago(d['last_seen'])}',style:const TextStyle(color:AppTheme.muted,fontSize:10))),trailing:session.canManage?PopupMenuButton<String>(onSelected:(v)=>_action(context,v,d),itemBuilder:(_)=>const[PopupMenuItem(value:'sensor',child:ListTile(leading:Icon(Icons.add_chart),title:Text('Sensör ekle'))),PopupMenuItem(value:'edit',child:ListTile(leading:Icon(Icons.edit_outlined),title:Text('Düzenle'))),PopupMenuItem(value:'delete',child:ListTile(leading:Icon(Icons.delete_outline),title:Text('Sil')))]):const Icon(Icons.chevron_right),onTap:()=>Navigator.push(context,MaterialPageRoute(builder:(_)=>DeviceDetailScreen(session:session,device:d))))));}).toList()))]))]);}));}}
+class DevicesScreen extends StatelessWidget {
+  final AppSession session;
+
+  const DevicesScreen({super.key, required this.session});
+
+  Future<void> _handleAction(
+    BuildContext context,
+    String action,
+    Map<String, dynamic> device,
+  ) async {
+    if (action == 'edit') {
+      await Navigator.push(
+        context,
+        MaterialPageRoute(
+          builder: (_) => DeviceEditorScreen(session: session, device: device),
+        ),
+      );
+      return;
+    }
+
+    if (action == 'sensor') {
+      await Navigator.push(
+        context,
+        MaterialPageRoute(
+          builder: (_) => SensorEditorScreen(session: session, device: device),
+        ),
+      );
+      return;
+    }
+
+    if (action == 'delete') {
+      final confirmed = await confirmDelete(
+        context,
+        'Cihaz silinsin mi?',
+        'Cihaz kalıcı silinir. Cihaza bağlı sensör varsa önce sensörleri silmeniz gerekir.',
+      );
+      if (!confirmed) return;
+
+      final ok = await session.deleteDevice(int.parse('${device['id']}'));
+      if (!context.mounted) return;
+      showSessionMessage(
+        context,
+        ok ? 'Cihaz silindi.' : session.error ?? 'Cihaz silinemedi.',
+      );
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AppBackground(
+      child: AnimatedBuilder(
+        animation: session,
+        builder: (context, _) {
+          final devices = session.devices;
+          final offlineMinutes =
+              int.tryParse('${session.company['offline_minutes'] ?? 3}') ?? 3;
+
+          return RefreshIndicator(
+            onRefresh: session.refresh,
+            child: ListView(
+              physics: const AlwaysScrollableScrollPhysics(),
+              padding: const EdgeInsets.only(bottom: 100),
+              children: [
+                MobileTopBar(
+                  title: 'Cihazlarım',
+                  subtitle: '${devices.length} kayıtlı cihaz',
+                  actions: [
+                    if (session.canManage)
+                      IconButton(
+                        tooltip: 'Cihaz ekle',
+                        onPressed: () {
+                          Navigator.push(
+                            context,
+                            MaterialPageRoute(
+                              builder: (_) => AddDeviceScreen(session: session),
+                            ),
+                          );
+                        },
+                        icon: const Icon(
+                          Icons.add_circle_outline,
+                          color: AppTheme.cyan,
+                        ),
+                      ),
+                  ],
+                ),
+                Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 18),
+                  child: devices.isEmpty
+                      ? Panel(
+                          child: Column(
+                            children: [
+                              const Icon(
+                                Icons.sensors_off_outlined,
+                                size: 46,
+                                color: AppTheme.muted,
+                              ),
+                              const SizedBox(height: 12),
+                              const Text(
+                                'Kayıtlı cihaz bulunmuyor.',
+                                style: TextStyle(color: AppTheme.muted),
+                              ),
+                              if (session.canManage) ...[
+                                const SizedBox(height: 16),
+                                PrimaryButton(
+                                  text: 'CİHAZ EKLE',
+                                  icon: Icons.add,
+                                  onPressed: () {
+                                    Navigator.push(
+                                      context,
+                                      MaterialPageRoute(
+                                        builder: (_) =>
+                                            AddDeviceScreen(session: session),
+                                      ),
+                                    );
+                                  },
+                                ),
+                              ],
+                            ],
+                          ),
+                        )
+                      : Column(
+                          children: devices.map((device) {
+                            final online = isOnline(
+                              device,
+                              offlineMinutes: offlineMinutes,
+                            );
+                            final sensorCount = session.sensors
+                                .where(
+                                  (sensor) =>
+                                      '${sensor['device_id']}' == '${device['id']}',
+                                )
+                                .length;
+                            final path = locationPath(
+                              session.locations,
+                              device['location_id'],
+                            );
+
+                            return Padding(
+                              padding: const EdgeInsets.only(bottom: 10),
+                              child: Panel(
+                                padding: EdgeInsets.zero,
+                                child: ListTile(
+                                  contentPadding:
+                                      const EdgeInsets.fromLTRB(14, 9, 8, 9),
+                                  leading: Container(
+                                    width: 48,
+                                    height: 48,
+                                    decoration: BoxDecoration(
+                                      color: AppTheme.panel2,
+                                      borderRadius: BorderRadius.circular(14),
+                                    ),
+                                    child: Icon(
+                                      Icons.memory,
+                                      color: online
+                                          ? AppTheme.green
+                                          : AppTheme.cyan,
+                                    ),
+                                  ),
+                                  title: Row(
+                                    children: [
+                                      Expanded(
+                                        child: Text(
+                                          device['name']?.toString() ??
+                                              device['code']?.toString() ??
+                                              'Cihaz',
+                                          style: const TextStyle(
+                                            fontWeight: FontWeight.w900,
+                                          ),
+                                        ),
+                                      ),
+                                      Container(
+                                        padding: const EdgeInsets.symmetric(
+                                          horizontal: 7,
+                                          vertical: 3,
+                                        ),
+                                        decoration: BoxDecoration(
+                                          color: (online
+                                                  ? AppTheme.green
+                                                  : const Color(0xFFFF6B6B))
+                                              .withOpacity(.13),
+                                          borderRadius: BorderRadius.circular(20),
+                                        ),
+                                        child: Text(
+                                          online ? 'Çevrimiçi' : 'Çevrimdışı',
+                                          style: TextStyle(
+                                            color: online
+                                                ? AppTheme.green
+                                                : const Color(0xFFFF6B6B),
+                                            fontSize: 9,
+                                            fontWeight: FontWeight.w800,
+                                          ),
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                  subtitle: Padding(
+                                    padding: const EdgeInsets.only(top: 5),
+                                    child: Text(
+                                      '${path.isEmpty ? 'Konum yok' : path} • $sensorCount sensör • ${ago(device['last_seen'])}',
+                                      style: const TextStyle(
+                                        color: AppTheme.muted,
+                                        fontSize: 10,
+                                      ),
+                                    ),
+                                  ),
+                                  trailing: session.canManage
+                                      ? PopupMenuButton<String>(
+                                          onSelected: (value) {
+                                            _handleAction(
+                                              context,
+                                              value,
+                                              device,
+                                            );
+                                          },
+                                          itemBuilder: (_) => const [
+                                            PopupMenuItem(
+                                              value: 'sensor',
+                                              child: ListTile(
+                                                leading: Icon(Icons.add_chart),
+                                                title: Text('Sensör ekle'),
+                                              ),
+                                            ),
+                                            PopupMenuItem(
+                                              value: 'edit',
+                                              child: ListTile(
+                                                leading: Icon(Icons.edit_outlined),
+                                                title: Text('Düzenle'),
+                                              ),
+                                            ),
+                                            PopupMenuItem(
+                                              value: 'delete',
+                                              child: ListTile(
+                                                leading: Icon(Icons.delete_outline),
+                                                title: Text('Sil'),
+                                              ),
+                                            ),
+                                          ],
+                                        )
+                                      : const Icon(Icons.chevron_right),
+                                  onTap: () {
+                                    Navigator.push(
+                                      context,
+                                      MaterialPageRoute(
+                                        builder: (_) => DeviceDetailScreen(
+                                          session: session,
+                                          device: device,
+                                        ),
+                                      ),
+                                    );
+                                  },
+                                ),
+                              ),
+                            );
+                          }).toList(),
+                        ),
+                ),
+              ],
+            ),
+          );
+        },
+      ),
+    );
+  }
+}
