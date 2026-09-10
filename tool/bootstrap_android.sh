@@ -16,26 +16,16 @@ import sys, re
 path = sys.argv[1]
 content = open(path, encoding='utf-8').read()
 
-# VisionSen BLE taraması konum amacıyla kullanılmaz. Eski paketlerde kalmış
-# olabilecek konum izinlerini de temizliyoruz; uygulama konum izni istemez.
-content = re.sub(r'\s*<uses-permission[^>]+android:name="android\.permission\.ACCESS_(?:FINE|COARSE)_LOCATION"[^>]*/>\s*', '\n', content)
-
-perms = '''    <uses-permission android:name="android.permission.BLUETOOTH" android:maxSdkVersion="30" />
-    <uses-permission android:name="android.permission.BLUETOOTH_ADMIN" android:maxSdkVersion="30" />
-    <uses-permission android:name="android.permission.BLUETOOTH_SCAN" android:usesPermissionFlags="neverForLocation" />
-    <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
-    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
-    <uses-permission android:name="android.permission.INTERNET" />
-    <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
-    <uses-permission android:name="android.permission.CHANGE_WIFI_STATE" />
-'''
-
+# VisionSen BLE taraması konum amacıyla kullanılmaz. Eski paketlerden kalmış
+# konum ve bildirim izinlerini de temizliyoruz.
 for permission in [
+    'android.permission.ACCESS_FINE_LOCATION',
+    'android.permission.ACCESS_COARSE_LOCATION',
+    'android.permission.POST_NOTIFICATIONS',
     'android.permission.BLUETOOTH',
     'android.permission.BLUETOOTH_ADMIN',
     'android.permission.BLUETOOTH_SCAN',
     'android.permission.BLUETOOTH_CONNECT',
-    'android.permission.POST_NOTIFICATIONS',
     'android.permission.INTERNET',
     'android.permission.ACCESS_WIFI_STATE',
     'android.permission.CHANGE_WIFI_STATE',
@@ -46,116 +36,31 @@ for permission in [
         content,
     )
 
+perms = '''    <uses-permission android:name="android.permission.BLUETOOTH" android:maxSdkVersion="30" />
+    <uses-permission android:name="android.permission.BLUETOOTH_ADMIN" android:maxSdkVersion="30" />
+    <uses-permission android:name="android.permission.BLUETOOTH_SCAN" android:usesPermissionFlags="neverForLocation" />
+    <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
+    <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
+    <uses-permission android:name="android.permission.CHANGE_WIFI_STATE" />
+'''
+
 content = re.sub(r'(<manifest[^>]*>)', r'\1\n' + perms, content, count=1)
 open(path, 'w', encoding='utf-8').write(content)
 PYEOF
 
-# Android yerel bildirim köprüsü. Yeni alarm yakalandığında Flutter bu MethodChannel
-# üzerinden yüksek öncelikli, sesli sistem bildirimi üretir.
+# v1.4.1'de eklenen yerel sesli alarm MethodChannel köprüsünü kaldır.
 MAIN_ACTIVITY="android/app/src/main/kotlin/com/visionsen/visionsen_setup/MainActivity.kt"
 mkdir -p "$(dirname "$MAIN_ACTIVITY")"
 cat > "$MAIN_ACTIVITY" <<'KOTLIN'
 package com.visionsen.visionsen_setup
 
-import android.app.Notification
-import android.app.NotificationChannel
-import android.app.NotificationManager
-import android.app.PendingIntent
-import android.content.Context
-import android.media.AudioAttributes
-import android.media.RingtoneManager
-import android.os.Build
 import io.flutter.embedding.android.FlutterActivity
-import io.flutter.embedding.engine.FlutterEngine
-import io.flutter.plugin.common.MethodChannel
 
-class MainActivity : FlutterActivity() {
-    companion object {
-        private const val METHOD_CHANNEL = "com.visionsen/alarm_notifications"
-        private const val NOTIFICATION_CHANNEL = "visionsen_alarm_channel"
-    }
-
-    override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
-        super.configureFlutterEngine(flutterEngine)
-        createAlarmChannel()
-
-        MethodChannel(
-            flutterEngine.dartExecutor.binaryMessenger,
-            METHOD_CHANNEL
-        ).setMethodCallHandler { call, result ->
-            when (call.method) {
-                "showAlarm" -> {
-                    val id = call.argument<Int>("id") ?: 1001
-                    val title = call.argument<String>("title") ?: "VisionSen Alarmı"
-                    val body = call.argument<String>("body") ?: "Yeni bir alarm oluştu."
-                    showAlarmNotification(id, title, body)
-                    result.success(true)
-                }
-                else -> result.notImplemented()
-            }
-        }
-    }
-
-    private fun createAlarmChannel() {
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return
-
-        val manager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
-        val sound = RingtoneManager.getDefaultUri(RingtoneManager.TYPE_ALARM)
-        val audio = AudioAttributes.Builder()
-            .setUsage(AudioAttributes.USAGE_ALARM)
-            .build()
-        val channel = NotificationChannel(
-            NOTIFICATION_CHANNEL,
-            "VisionSen Alarmları",
-            NotificationManager.IMPORTANCE_HIGH
-        ).apply {
-            description = "VisionSen sensör ve cihaz alarm bildirimleri"
-            enableVibration(true)
-            setSound(sound, audio)
-        }
-        manager.createNotificationChannel(channel)
-    }
-
-    private fun showAlarmNotification(id: Int, title: String, body: String) {
-        val manager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
-        val sound = RingtoneManager.getDefaultUri(RingtoneManager.TYPE_ALARM)
-        val launchIntent = packageManager.getLaunchIntentForPackage(packageName)
-        val pendingIntent = launchIntent?.let {
-            PendingIntent.getActivity(
-                this,
-                0,
-                it,
-                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
-            )
-        }
-
-        val builder = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            Notification.Builder(this, NOTIFICATION_CHANNEL)
-        } else {
-            Notification.Builder(this)
-                .setPriority(Notification.PRIORITY_MAX)
-                .setSound(sound)
-        }
-
-        builder
-            .setSmallIcon(android.R.drawable.stat_notify_error)
-            .setContentTitle(title)
-            .setContentText(body)
-            .setStyle(Notification.BigTextStyle().bigText(body))
-            .setAutoCancel(true)
-            .setCategory(Notification.CATEGORY_ALARM)
-            .setVisibility(Notification.VISIBILITY_PUBLIC)
-            .setWhen(System.currentTimeMillis())
-            .setShowWhen(true)
-
-        if (pendingIntent != null) builder.setContentIntent(pendingIntent)
-
-        manager.notify(id, builder.build())
-    }
-}
+class MainActivity : FlutterActivity()
 KOTLIN
 
-echo "Android platform dosyaları hazır. Konum izni kaldırıldı, alarm bildirimi etkin."
+echo "Android platform dosyaları hazır. Konum ve yerel sesli alarm bildirimi yok."
 
 rm -f test/widget_test.dart
 
