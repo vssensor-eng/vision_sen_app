@@ -37,17 +37,42 @@ echo "Android platform dosyaları hazır."
 # flutter create tarafindan olusturulan ornek test dosyasini kaldir
 rm -f test/widget_test.dart
 
-# Toolchain: compileSdk 35, AGP ve Kotlin surumlerini yukselt
+# Toolchain: compileSdk 35, NDK 26.1, AGP ve Kotlin surumlerini yukselt.
+# flutter_secure_storage/FlutterBluePlus'in Android bağımlılıkları NDK 26.1 ister.
+# Tink'in R8 aşamasında referans verdiği annotation sınıflarını da release classpath'e
+# ekleyerek minifyReleaseWithR8 sırasında "Missing class" hatasını engelleriz.
 python3 - <<'PYEOF'
 import re
 from pathlib import Path
 
 for name in ('android/app/build.gradle', 'android/app/build.gradle.kts'):
     p = Path(name)
-    if p.exists():
-        t = p.read_text()
-        t = re.sub(r'compileSdk\s*=?\s*[^\n]+', 'compileSdk = 35', t, count=1)
-        p.write_text(t)
+    if not p.exists():
+        continue
+
+    t = p.read_text()
+    t = re.sub(r'compileSdk\s*=?\s*[^\n]+', 'compileSdk = 35', t, count=1)
+
+    # android { } bloğuna sabit NDK sürümünü ekle/değiştir.
+    if re.search(r'ndkVersion\s*=?\s*[^\n]+', t):
+        t = re.sub(r'ndkVersion\s*=?\s*[^\n]+', 'ndkVersion = "26.1.10909125"', t, count=1)
+    else:
+        t = re.sub(r'(android\s*\{)', r'\1\n    ndkVersion = "26.1.10909125"', t, count=1)
+
+    # Groovy ve Kotlin DSL için R8'in ihtiyaç duyduğu yalnızca-annotation bağımlılıkları.
+    if name.endswith('.kts'):
+        dep1 = '    implementation("com.google.errorprone:error_prone_annotations:2.36.0")'
+        dep2 = '    implementation("com.google.code.findbugs:jsr305:3.0.2")'
+        block = f'\ndependencies {{\n{dep1}\n{dep2}\n}}\n'
+    else:
+        dep1 = "    implementation 'com.google.errorprone:error_prone_annotations:2.36.0'"
+        dep2 = "    implementation 'com.google.code.findbugs:jsr305:3.0.2'"
+        block = f'\ndependencies {{\n{dep1}\n{dep2}\n}}\n'
+
+    if 'com.google.errorprone:error_prone_annotations' not in t:
+        t += block
+
+    p.write_text(t)
 
 for name in ('android/settings.gradle', 'android/settings.gradle.kts'):
     p = Path(name)
