@@ -111,7 +111,11 @@ class _LineChartPainter extends CustomPainter {
     for (var i = 0; i < values.length; i++) {
       final x = size.width * i / (values.length - 1);
       final y = size.height - ((values[i] - minV) / span) * (size.height - 16) - 8;
-      if (i == 0) path.moveTo(x, y); else path.lineTo(x, y);
+      if (i == 0) {
+        path.moveTo(x, y);
+      } else {
+        path.lineTo(x, y);
+      }
     }
     final paint = Paint()..color = AppTheme.cyan..style = PaintingStyle.stroke..strokeWidth = 2.4..strokeCap = StrokeCap.round..strokeJoin = StrokeJoin.round;
     canvas.drawPath(path, paint);
