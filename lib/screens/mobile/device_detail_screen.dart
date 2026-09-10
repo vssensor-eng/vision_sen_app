@@ -13,6 +13,7 @@ class DeviceDetailScreen extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final sensorList = session.sensors.where((s) => '${s['device_id']}' == '${device['id']}').toList();
+    final catalog = session.metricCatalog;
     final offlineMinutes = int.tryParse('${session.company['offline_minutes'] ?? 3}') ?? 3;
     final online = isOnline(device, offlineMinutes: offlineMinutes);
     Map<String, dynamic>? location;
@@ -90,12 +91,12 @@ class DeviceDetailScreen extends StatelessWidget {
                           child: ListTile(
                             contentPadding: const EdgeInsets.fromLTRB(14, 7, 10, 7),
                             leading: const CircleAvatar(backgroundColor: AppTheme.panel2, child: Icon(Icons.show_chart, color: AppTheme.cyan)),
-                            title: Text(metricLabel(metric), style: const TextStyle(fontWeight: FontWeight.w900)),
+                            title: Text(sensor['name']?.toString() ?? metricLabel(metric, catalog), style: const TextStyle(fontWeight: FontWeight.w900)),
                             subtitle: Text('${sensor['channel'] ?? ''} • ${ago(sensor['latest_at'])}', style: const TextStyle(color: AppTheme.muted, fontSize: 10)),
                             trailing: Row(
                               mainAxisSize: MainAxisSize.min,
                               children: [
-                                Text(formatValue(sensor['latest_value'], metricUnit(metric)), style: const TextStyle(fontWeight: FontWeight.w900, fontSize: 16)),
+                                Text(formatValue(sensor['latest_value'], metricUnit(metric, catalog)), style: const TextStyle(fontWeight: FontWeight.w900, fontSize: 16)),
                                 const SizedBox(width: 3),
                                 const Icon(Icons.chevron_right),
                               ],
