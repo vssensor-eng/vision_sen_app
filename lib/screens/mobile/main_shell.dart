@@ -1,8 +1,5 @@
-import 'dart:async';
-
 import 'package:flutter/material.dart';
 
-import '../../services/alarm_notification_service.dart';
 import '../../services/app_session.dart';
 import '../../theme/app_theme.dart';
 import '../home_screen.dart';
@@ -21,84 +18,8 @@ class MainShell extends StatefulWidget {
   State<MainShell> createState() => _MainShellState();
 }
 
-class _MainShellState extends State<MainShell> with WidgetsBindingObserver {
+class _MainShellState extends State<MainShell> {
   int index = 0;
-  Timer? _alarmTimer;
-  bool _pollingAlarms = false;
-  final Set<String> _knownAlarmIds = <String>{};
-
-  @override
-  void initState() {
-    super.initState();
-    WidgetsBinding.instance.addObserver(this);
-    WidgetsBinding.instance.addPostFrameCallback((_) => _startAlarmWatcher());
-  }
-
-  @override
-  void dispose() {
-    _alarmTimer?.cancel();
-    WidgetsBinding.instance.removeObserver(this);
-    super.dispose();
-  }
-
-  @override
-  void didChangeAppLifecycleState(AppLifecycleState state) {
-    if (state == AppLifecycleState.resumed) {
-      _pollAlarms();
-    }
-  }
-
-  Future<void> _startAlarmWatcher() async {
-    await AlarmNotificationService.instance.initialize();
-    _knownAlarmIds
-      ..clear()
-      ..addAll(widget.session.alarms.map(_alarmKey));
-
-    _alarmTimer?.cancel();
-    _alarmTimer = Timer.periodic(
-      const Duration(seconds: 20),
-      (_) => _pollAlarms(),
-    );
-  }
-
-  Future<void> _pollAlarms() async {
-    if (_pollingAlarms || !widget.session.authenticated) return;
-    _pollingAlarms = true;
-    try {
-      final data = await widget.session.api.alarms(state: 'open');
-      final raw = data['items'];
-      final items = raw is List
-          ? raw
-              .whereType<Map>()
-              .map((item) => Map<String, dynamic>.from(item))
-              .toList()
-          : <Map<String, dynamic>>[];
-
-      final currentIds = items.map(_alarmKey).toSet();
-      final newItems = items
-          .where((alarm) => !_knownAlarmIds.contains(_alarmKey(alarm)))
-          .toList();
-
-      _knownAlarmIds
-        ..clear()
-        ..addAll(currentIds);
-      widget.session.replaceOpenAlarms(items);
-
-      for (final alarm in newItems) {
-        await AlarmNotificationService.instance.showAlarm(alarm);
-      }
-    } catch (_) {
-      // Alarm izleme hatası ana uygulama akışını veya BLE kurulumunu bozmaz.
-    } finally {
-      _pollingAlarms = false;
-    }
-  }
-
-  String _alarmKey(Map<String, dynamic> alarm) {
-    final id = alarm['id'];
-    if (id != null && '$id'.isNotEmpty) return '$id';
-    return '${alarm['kind']}:${alarm['device_id']}:${alarm['sensor_id']}:${alarm['opened_at']}';
-  }
 
   void _openIndex(int value) {
     if (!mounted) return;
