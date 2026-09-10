@@ -23,8 +23,6 @@ class _AdvertisementProtocolInfo {
 class BleService {
   static const bool debugShowAllDevices = false;
 
-  /// Bluetooth adaptörünün güncel durumunu döndürür. Uygulama bu metodu
-  /// çağırırken Bluetooth'u AÇMAZ; yalnızca mevcut durumu okur.
   Future<BluetoothAdapterState> getAdapterState() async {
     try {
       if (!await FlutterBluePlus.isSupported) {
@@ -53,9 +51,6 @@ class BleService {
     }
   }
 
-  /// Yalnızca UI katmanı kullanıcıdan açık onay aldıktan SONRA çağrılmalıdır.
-  /// Android'de gerekli CONNECT iznini ister ve ardından sistemin Bluetooth açma
-  /// diyaloğunu başlatır. Kullanıcı sistem isteğini de reddederse false döner.
   Future<bool> enableBluetoothAfterUserConsent() async {
     if (await getAdapterState() == BluetoothAdapterState.on) return true;
     if (!Platform.isAndroid) return false;
@@ -81,11 +76,7 @@ class BleService {
   BluetoothCharacteristic? _infoChar;
   int? _advertisedProtocolVersion;
 
-  /// Cihazın reddettiği son provisioning hata kodu.
   String? lastError;
-
-  /// Son BLE taramasının kullanıcıya gösterilebilecek hata nedeni. null ise
-  /// tarama teknik olarak tamamlanmıştır; sonuç listesi ayrıca boş olabilir.
   String? lastScanError;
 
   Future<bool> _ensurePermissions() async {
@@ -97,8 +88,6 @@ class BleService {
         statuses[Permission.bluetoothConnect]?.isGranted == true;
   }
 
-  /// Firmware scan response içindeki VisionSen üretici verisi:
-  /// company id 0xFFFF, payload = ['V','S', protocol_version, configured=0/1].
   _AdvertisementProtocolInfo? _protocolFromAdvertisement(AdvertisementData data) {
     for (final bytes in data.manufacturerData.values) {
       for (var i = 0; i + 3 < bytes.length; i++) {
@@ -113,16 +102,25 @@ class BleService {
   bool _hasVisionSenManufacturerData(AdvertisementData data) =>
       _protocolFromAdvertisement(data) != null;
 
+  String _scanName(ScanResult r) {
+    // Android platformName eski bond/GATT cache'inden önceki adı döndürebilir.
+    // Reklam paketindeki güncel ad her zaman önceliklidir.
+    final advertised = r.advertisementData.advName.trim();
+    if (advertised.isNotEmpty) return advertised;
+    final platform = r.device.platformName.trim();
+    if (platform.isNotEmpty) return platform;
+    return '(isimsiz) ${r.device.remoteId.str}';
+  }
+
   List<BleDeviceModel> _modelsFromScanResults(Iterable<ScanResult> results) {
     return results.map((r) {
-      String name = r.device.platformName;
-      if (name.isEmpty) name = r.advertisementData.advName;
-      if (name.isEmpty) name = '(isimsiz) ${r.device.remoteId.str}';
+      final name = _scanName(r);
       final isVisionSen =
           r.advertisementData.serviceUuids.contains(_BleUuids.service) ||
           name.startsWith('VISIONSEN-ESP-') ||
           _hasVisionSenManufacturerData(r.advertisementData);
-      final protocolInfo = isVisionSen ? _protocolFromAdvertisement(r.advertisementData) : null;
+      final protocolInfo =
+          isVisionSen ? _protocolFromAdvertisement(r.advertisementData) : null;
       return BleDeviceModel(
         id: r.device.remoteId.str,
         name: name,
@@ -141,30 +139,22 @@ class BleService {
     final oldProtocol = _protocolFromAdvertisement(previous.advertisementData);
     final newProtocol = _protocolFromAdvertisement(current.advertisementData);
     if (oldProtocol == null && newProtocol != null) return true;
-    if (oldProtocol != null && newProtocol != null &&
+    if (oldProtocol != null &&
+        newProtocol != null &&
         (oldProtocol.protocolVersion != newProtocol.protocolVersion ||
             oldProtocol.configured != newProtocol.configured)) {
       return true;
     }
 
-    final oldName = previous.device.platformName.isNotEmpty
-        ? previous.device.platformName
-        : previous.advertisementData.advName;
-    final newName = current.device.platformName.isNotEmpty
-        ? current.device.platformName
-        : current.advertisementData.advName;
-    if (oldName.isEmpty && newName.isNotEmpty) return true;
+    if (_scanName(previous) != _scanName(current)) return true;
 
-    final oldHasService = previous.advertisementData.serviceUuids.contains(_BleUuids.service);
-    final newHasService = current.advertisementData.serviceUuids.contains(_BleUuids.service);
+    final oldHasService =
+        previous.advertisementData.serviceUuids.contains(_BleUuids.service);
+    final newHasService =
+        current.advertisementData.serviceUuids.contains(_BleUuids.service);
     return !oldHasService && newHasService;
   }
 
-  /// VisionSen cihazlarını [timeout] boyunca tarar. Bulunan cihazlar tarama
-  /// tamamlanmadan [onUpdate] ile anında UI'a bildirilir. Tarama sırasında aynı
-  /// cihazın RSSI değişimleri gereksiz rebuild oluşturmasın diye yalnızca yeni
-  /// cihaz veya daha zengin kimlik/protokol bilgisi geldiğinde ara güncelleme
-  /// gönderilir. Nihai liste dönüş değerinde en güncel RSSI korunur.
   Future<List<BleDeviceModel>> scan({
     Duration timeout = const Duration(seconds: 60),
     void Function(List<BleDeviceModel> devices)? onUpdate,
@@ -181,8 +171,6 @@ class BleService {
       return [];
     }
 
-    // Önceki ekrandan/denemeden açık kalan bir tarama varsa yeni 60 sn'lik
-    // pencereyi temiz başlatmak için kapatılır.
     if (FlutterBluePlus.isScanningNow) {
       try {
         await FlutterBluePlus.stopScan();
@@ -200,15 +188,13 @@ class BleService {
           continue;
         }
 
-        final hasService = r.advertisementData.serviceUuids.contains(_BleUuids.service);
-        final name = r.device.platformName.isNotEmpty
-            ? r.device.platformName
-            : r.advertisementData.advName;
+        final hasService =
+            r.advertisementData.serviceUuids.contains(_BleUuids.service);
+        final name = _scanName(r);
         final nameMatch = name.startsWith('VISIONSEN-ESP-');
-        final manufacturerMatch = _hasVisionSenManufacturerData(r.advertisementData);
+        final manufacturerMatch =
+            _hasVisionSenManufacturerData(r.advertisementData);
 
-        // Android tarafındaki servis UUID tarama filtresine güvenmiyoruz. Tüm
-        // reklamlar alınır ve VisionSen işaretleri uygulama içinde süzülür.
         if (hasService || nameMatch || manufacturerMatch) {
           final id = r.device.remoteId.str;
           if (_scanMetadataImproved(found[id], r)) shouldNotify = true;
@@ -239,8 +225,6 @@ class BleService {
     return _modelsFromScanResults(found.values);
   }
 
-  /// Kullanıcı tarama sürerken bir cihaz seçtiğinde çağrılır. Devam eden tarama
-  /// hemen durdurulur; böylece bağlantı kurulurken arka planda BLE scan çalışmaz.
   Future<void> stopScan() async {
     if (!FlutterBluePlus.isScanningNow) return;
     try {
@@ -248,22 +232,41 @@ class BleService {
     } catch (_) {}
   }
 
-  /// Bağlanır ve Android'de bonding'i önden başlatır. Firmware'in INFO/CONFIG
-  /// karakteristikleri şifreli GATT erişimi istediği için bağ başarısızsa
-  /// güvenli okuma/yazma da başarısız olur.
+  Future<bool> _ensureAndroidBond(BluetoothDevice target) async {
+    if (!Platform.isAndroid) return true;
+
+    try {
+      final current = await target.bondState.first
+          .timeout(const Duration(seconds: 2));
+      if (current == BluetoothBondState.bonded) return true;
+    } catch (_) {}
+
+    try {
+      // flutter_blue_plus 1.35.8 ile bonding bekleme hatası düzeltilmiştir.
+      // İlk bağlantıda eşleştirme penceresini doğrudan burada gösterip kullanıcı
+      // onayını bekliyoruz; GATT read işlemlerine erken geçmiyoruz.
+      await target.createBond(timeout: 45);
+      final bonded = await target.bondState
+          .where((state) => state == BluetoothBondState.bonded)
+          .first
+          .timeout(const Duration(seconds: 5));
+      return bonded == BluetoothBondState.bonded;
+    } catch (_) {
+      return false;
+    }
+  }
+
   Future<bool> connect(BleDeviceModel device) async {
     final target = BluetoothDevice.fromId(device.id);
     _advertisedProtocolVersion = device.protocolVersion;
     try {
-      await target.connect(timeout: const Duration(seconds: 12), autoConnect: false);
+      await target.connect(
+        timeout: const Duration(seconds: 12),
+        autoConnect: false,
+      );
 
-      if (Platform.isAndroid) {
-        try {
-          await target.createBond(timeout: 20);
-        } catch (_) {
-          // Zaten bonded cihazlarda veya üreticiye özgü Android davranışlarında
-          // createBond hata verebilir. Güvenli karakteristik erişimi nihai kontrolü yapar.
-        }
+      if (!await _ensureAndroidBond(target)) {
+        throw Exception('BLE eşleştirme tamamlanamadı');
       }
 
       try {
@@ -276,11 +279,13 @@ class BleService {
         orElse: () => throw Exception('VisionSen BLE servisi bulunamadı'),
       );
 
-      _configChar = service.characteristics.firstWhere((c) => c.uuid == _BleUuids.config);
-      _statusChar = service.characteristics.firstWhere((c) => c.uuid == _BleUuids.status);
-      _infoChar = service.characteristics.firstWhere((c) => c.uuid == _BleUuids.info);
+      _configChar = service.characteristics
+          .firstWhere((c) => c.uuid == _BleUuids.config);
+      _statusChar = service.characteristics
+          .firstWhere((c) => c.uuid == _BleUuids.status);
+      _infoChar =
+          service.characteristics.firstWhere((c) => c.uuid == _BleUuids.info);
 
-      // CCCD de firmware tarafında şifreli erişime zorlanır.
       await _statusChar!.setNotifyValue(true);
       _device = target;
       return true;
@@ -299,44 +304,54 @@ class BleService {
 
   Future<Map<String, dynamic>?> readDeviceInfo() async {
     if (_infoChar == null) return null;
-    try {
-      final value = await _infoChar!.read();
-      final decoded = jsonDecode(utf8.decode(value, allowMalformed: true));
-      if (decoded is! Map) return null;
 
-      final info = Map<String, dynamic>.from(decoded);
-      if (info['mac'] is! String || info['configured'] is! bool) return null;
+    // Android bazı telefonlarda bonding tamamlandıktan hemen sonraki ilk encrypted
+    // read'i ATT/GATT hatasıyla reddedebiliyor. Aynı bağlantı içinde kısa gecikmeli
+    // iki tekrar yaparak kullanıcıyı ikinci kez "Bağlantı Kur" demeye zorlamıyoruz.
+    for (var attempt = 0; attempt < 3; attempt++) {
+      try {
+        final value = await _infoChar!.read();
+        final decoded = jsonDecode(utf8.decode(value, allowMalformed: true));
+        if (decoded is! Map) return null;
 
-      // Kimlik alanları zorunludur. Eski firmware için varsayım/fallback yoktur.
-      // Böylece aynı donanımda farklı firmware olsa bile yalnızca açıkça
-      // desteklenen device_type + protocol_version eşleşmesi kabul edilir.
-      final rawProtocol = info['protocol_version'];
-      int? protocolVersion;
-      if (rawProtocol is int) {
-        protocolVersion = rawProtocol;
-      } else if (rawProtocol is num && rawProtocol == rawProtocol.roundToDouble()) {
-        protocolVersion = rawProtocol.toInt();
+        final info = Map<String, dynamic>.from(decoded);
+        if (info['mac'] is! String || info['configured'] is! bool) return null;
+
+        final rawProtocol = info['protocol_version'];
+        int? protocolVersion;
+        if (rawProtocol is int) {
+          protocolVersion = rawProtocol;
+        } else if (rawProtocol is num &&
+            rawProtocol == rawProtocol.roundToDouble()) {
+          protocolVersion = rawProtocol.toInt();
+        }
+
+        final rawDeviceType = info['device_type'];
+        final deviceType = rawDeviceType is String ? rawDeviceType.trim() : '';
+
+        info['protocol_version'] = protocolVersion;
+        info['device_type'] = deviceType;
+        info['identity_fields_valid'] =
+            protocolVersion != null && deviceType.isNotEmpty;
+        info['advertised_protocol_version'] = _advertisedProtocolVersion;
+        info['protocol_mismatch'] = _advertisedProtocolVersion != null &&
+            protocolVersion != null &&
+            _advertisedProtocolVersion != protocolVersion;
+        return info;
+      } catch (_) {
+        if (attempt < 2) {
+          await Future.delayed(Duration(milliseconds: 500 + (attempt * 350)));
+        }
       }
-
-      final rawDeviceType = info['device_type'];
-      final deviceType = rawDeviceType is String ? rawDeviceType.trim() : '';
-
-      info['protocol_version'] = protocolVersion;
-      info['device_type'] = deviceType;
-      info['identity_fields_valid'] = protocolVersion != null && deviceType.isNotEmpty;
-      info['advertised_protocol_version'] = _advertisedProtocolVersion;
-      info['protocol_mismatch'] = _advertisedProtocolVersion != null &&
-          protocolVersion != null &&
-          _advertisedProtocolVersion != protocolVersion;
-      return info;
-    } catch (_) {
-      return null;
     }
+    return null;
   }
 
   Future<bool> authenticate() async {
     final info = await readDeviceInfo();
-    if (info == null || info['identity_fields_valid'] != true || info['protocol_mismatch'] == true) {
+    if (info == null ||
+        info['identity_fields_valid'] != true ||
+        info['protocol_mismatch'] == true) {
       return false;
     }
     final protocol = info['protocol_version'];
@@ -352,8 +367,6 @@ class BleService {
 
     final validationError = config.validate();
     if (validationError != null) {
-      // Kod (ERROR:...) yerine doğrudan okunabilir mesaj saklanır; setup_screen
-      // bunu "ERROR:" ile başlamayan değerler için olduğu gibi gösterir.
       lastError = validationError;
       return false;
     }
@@ -364,15 +377,16 @@ class BleService {
       'server_url': config.serverUrl,
       'serial': config.serial,
       'company_key': config.effectiveCompanyKey,
-      // Kurulu cihazda firmware mevcut firma anahtarını bununla doğrular.
-      // Firma anahtarı değiştirilmiyorsa effectiveCompanyKey de mevcut anahtardır;
-      // değiştiriliyorsa company_key yeni değeri, auth_key mevcut değeri taşır.
-      // İlk kurulumda auth_key boş gider ve firmware bu alanı kontrol etmez.
-      'auth_key': config.deviceAlreadyConfigured ? config.currentCompanyKey : '',
+      'auth_key':
+          config.deviceAlreadyConfigured ? config.currentCompanyKey : '',
+      // Firmware v1.3.9+ bu alanı NVS'te saklar ve sonraki gerçek güç
+      // açılışında BLE reklam adında kullanır. Eski firmware alanı yok sayar.
+      'device_name': config.deviceName.trim(),
     });
     final bytes = utf8.encode(payload);
     const chunkSize = 180;
-    final totalChunks = ((bytes.length + chunkSize - 1) ~/ chunkSize).clamp(1, 255).toInt();
+    final totalChunks =
+        ((bytes.length + chunkSize - 1) ~/ chunkSize).clamp(1, 255).toInt();
 
     final resultCompleter = Completer<bool>();
     late final StreamSubscription<List<int>> sub;
@@ -389,7 +403,8 @@ class BleService {
     try {
       for (int i = 0; i < totalChunks; i++) {
         final start = i * chunkSize;
-        final end = (start + chunkSize > bytes.length) ? bytes.length : start + chunkSize;
+        final end =
+            (start + chunkSize > bytes.length) ? bytes.length : start + chunkSize;
         final chunkPayload = bytes.sublist(start, end);
         final packet = Uint8List(2 + chunkPayload.length);
         packet[0] = i;
