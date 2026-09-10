@@ -1,40 +1,22 @@
-# VisionSen Mobil — v1.3.1
+# VisionSen Mobil — v1.4.0
 
-Bu sürüm mevcut BLE cihaz yapılandırma akışını korur ve uygulamayı **Ortam İzleme 2.5.48 no-cron + Mobil API** sürümüyle uyumlu hale getirir. Kullanıcı önce Ortam İzleme hesabıyla giriş yapar; başarılı girişten sonra izleme ve cihaz yapılandırma modülleri açılır.
+VisionSen Mobil, **Ortam İzleme 2.5.50 no-cron + Mobil API** ile çalışır. Mevcut BLE cihaz yapılandırma akışı değiştirilmemiştir; BLE yalnız login sonrasında **Yapılandır > BAŞLAYALIM** ile açılır.
 
-## Ana navigasyon
-- Ana Sayfa — firma/bina/oda/cihaz/sensör özeti
-- Binalar — web panelinde oluşturulmuş bina ve odalar
-- Cihazlar — web hesabındaki cihazlar, canlı durum ve yetkili kullanıcıda yeni cihaz ekleme
-- Yapılandır — mevcut BLE kurulum akışı; Bluetooth yalnız `BAŞLAYALIM` denince kontrol edilir
+## Alt navigasyon
+- Ana — bina/oda/cihaz/sensör/alarm sayıları ve sistem özeti
+- Detay — web panelindeki Detay Görünüm mantığı: bina/oda/dolap seçimi, canlı sensör kartları, ikonlar, 24 saat trend, alarmlar ve cihazlar
+- Binalar — bina/oda/dolap ekleme, düzenleme ve silme
+- Cihazlar — cihaz ekleme, düzenleme, silme ve sensör yönetimi
+- Yapılandır — mevcut BLE provisioning akışı
 - Profil — hesap/firma bilgileri ve çıkış
 
-## Web entegrasyonu
-Mobil uygulama `https://www.vsias.com/wp-json/oim/v1/mobile/*` endpointlerini kullanır. Web tarafında Ortam İzleme 2.5.48 no-cron + Mobil API sürümü kurulu olmalıdır.
+## Yönetim
+Firma yöneticisi mobil uygulamadan bina, oda, dolap, cihaz ve sensör oluşturabilir/düzenleyebilir/silebilir. Sensörler veri modelinde **cihaza bağlıdır**; cihaz oda veya dolaba atanır. İzleme personeli salt okunur erişim kullanır.
 
-Oturum tokenı `flutter_secure_storage` içinde tutulur. BLE ekranlarına login olmadan rota açılmaz; ana uygulama yalnız doğrulanmış mobil oturumdan sonra oluşturulur.
+## Grafik
+Sensöre dokunulduğunda 1 saat, 6 saat, 24 saat, 7 gün, 30 gün ve 90 gün aralıkları açılır. Grafik X ekseninde zamanı, Y ekseninde sensör birimini gösterir. Güncel, minimum ve maksimum ayrı gösterilir; ortalama kartı yoktur.
 
-## 2.5.48 uyumu
-- Sensör adları ve birimleri web tarafındaki `metrics` kataloğundan dinamik alınır.
-- Yeni cihaz ekranındaki sensör seçenekleri web kataloğundan üretilir; `selectable=false` kayıtlar gösterilmez.
-- History ekranı 1 saat, 6 saat, 24 saat, 7 gün, 30 gün ve 90 gün aralıklarını destekler.
-- Cihaz ekleme yalnız firma yöneticisi rolünde gösterilir ve sunucu tarafında da ayrıca doğrulanır.
-- Web tarafındaki WP-Cron/harici cron bağımsız 2.5.47+ bakım modeli değiştirilmez.
+## Web API
+`https://www.vsias.com/wp-json/oim/v1/mobile/*`
 
-## BLE akışı
-Mevcut BLE servis UUID'leri, cihaz tarama, doğrulama, Wi-Fi, cihaz anahtarı, sunucu, özet ve kurulum ekranları değiştirilmemiştir. Bluetooth kontrolü uygulama açılışında değil, login sonrasında `Yapılandır > BAŞLAYALIM` ile başlar.
-
-## Bağımlılıklar
-- flutter_blue_plus
-- permission_handler
-- http
-- flutter_secure_storage
-
-## Çalıştırma
-```bash
-bash tool/bootstrap_android.sh
-flutter pub get
-flutter analyze
-flutter test
-flutter run
-```
+Mobil CRUD uçları yalnız HTTPS + geçerli Bearer token + manager rolünde çalışır. Web tarafındaki bağlı kayıt/silme güvenlik kuralları aynen korunur. WP-Cron veya harici cron bağımlılığı yoktur.

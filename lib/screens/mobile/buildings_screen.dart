@@ -2,70 +2,13 @@ import 'package:flutter/material.dart';
 import '../../services/app_session.dart';
 import '../../theme/app_theme.dart';
 import '../../widgets/app_shell.dart';
+import 'location_editor_screen.dart';
 import 'mobile_widgets.dart';
 import 'room_detail_screen.dart';
 
-class BuildingsScreen extends StatelessWidget {
-  final AppSession session;
-  const BuildingsScreen({super.key, required this.session});
-
-  @override
-  Widget build(BuildContext context) => AppBackground(
-        child: AnimatedBuilder(
-          animation: session,
-          builder: (context, _) {
-            final buildings = session.locations.where((l) => l['type'] == 'building').toList();
-            return RefreshIndicator(
-              onRefresh: session.refresh,
-              child: ListView(
-                physics: const AlwaysScrollableScrollPhysics(),
-                padding: const EdgeInsets.only(bottom: 24),
-                children: [
-                  const MobileTopBar(title: 'Binalar ve Odalar', subtitle: 'Web panelinde oluşturduğunuz konumlar'),
-                  Padding(
-                    padding: const EdgeInsets.symmetric(horizontal: 18),
-                    child: buildings.isEmpty
-                        ? const Panel(child: Text('Web panelinde henüz bina oluşturulmamış.', style: TextStyle(color: AppTheme.muted)))
-                        : Column(
-                            children: buildings.map((building) {
-                              final id = int.tryParse('${building['id']}') ?? 0;
-                              final rooms = session.locations.where((l) => l['type'] == 'room' && int.tryParse('${l['parent_id']}') == id).toList();
-                              final roomIds = rooms.map((e) => int.tryParse('${e['id']}') ?? -1).toSet();
-                              final deviceCount = session.devices.where((d) => roomIds.contains(int.tryParse('${d['location_id']}'))).length;
-                              return Padding(
-                                padding: const EdgeInsets.only(bottom: 12),
-                                child: Panel(
-                                  padding: const EdgeInsets.all(0),
-                                  child: ExpansionTile(
-                                    shape: const Border(),
-                                    collapsedShape: const Border(),
-                                    leading: Container(
-                                      width: 42,
-                                      height: 42,
-                                      decoration: BoxDecoration(color: AppTheme.cyan.withOpacity(.12), borderRadius: BorderRadius.circular(12)),
-                                      child: const Icon(Icons.apartment, color: AppTheme.cyan),
-                                    ),
-                                    title: Text(building['name']?.toString() ?? 'Bina', style: const TextStyle(fontWeight: FontWeight.w900)),
-                                    subtitle: Text('${rooms.length} oda • $deviceCount cihaz', style: const TextStyle(color: AppTheme.muted, fontSize: 11)),
-                                    children: rooms.isEmpty
-                                        ? const [Padding(padding: EdgeInsets.fromLTRB(18, 0, 18, 18), child: Align(alignment: Alignment.centerLeft, child: Text('Bu binada oda yok.', style: TextStyle(color: AppTheme.muted))))]
-                                        : rooms.map((room) => ListTile(
-                                              contentPadding: const EdgeInsets.symmetric(horizontal: 18),
-                                              leading: const Icon(Icons.meeting_room_outlined, color: AppTheme.green),
-                                              title: Text(room['name']?.toString() ?? 'Oda'),
-                                              trailing: const Icon(Icons.chevron_right),
-                                              onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => RoomDetailScreen(session: session, room: room, building: building))),
-                                            )).toList(),
-                                  ),
-                                ),
-                              );
-                            }).toList(),
-                          ),
-                  ),
-                ],
-              ),
-            );
-          },
-        ),
-      );
-}
+class BuildingsScreen extends StatelessWidget{
+  final AppSession session;const BuildingsScreen({super.key,required this.session});
+  Future<void> _edit(BuildContext c,{Map<String,dynamic>? item,required String type,int? parent})async{await Navigator.push(c,MaterialPageRoute(builder:(_)=>LocationEditorScreen(session:session,location:item,type:type,parentId:parent)));}
+  Future<void> _delete(BuildContext c,Map<String,dynamic> item)async{final name=item['name']?.toString()??'Konum';if(!await confirmDelete(c,'$name silinsin mi?','Bu işlem kalıcıdır. Bağlı oda, dolap veya cihaz varsa sunucu silmeye izin vermez. Önce alt kayıtları kaldırın.'))return;final ok=await session.deleteLocation(int.parse('${item['id']}'));if(!c.mounted)return;showSessionMessage(c,ok?'Konum silindi.':session.error??'Konum silinemedi.');}
+  PopupMenuButton<String> _menu(BuildContext c,Map<String,dynamic> item,{required String type})=>PopupMenuButton<String>(icon:const Icon(Icons.more_vert),onSelected:(v){if(v=='edit')_edit(c,item:item,type:type);if(v=='delete')_delete(c,item);if(v=='room')_edit(c,type:'room',parent:int.tryParse('${item['id']}'));if(v=='cabinet')_edit(c,type:'cabinet',parent:int.tryParse('${item['id']}'));},itemBuilder:(_)=>[if(type=='building')const PopupMenuItem(value:'room',child:ListTile(leading:Icon(Icons.add),title:Text('Oda ekle'))),if(type=='room')const PopupMenuItem(value:'cabinet',child:ListTile(leading:Icon(Icons.add),title:Text('Dolap ekle'))),const PopupMenuItem(value:'edit',child:ListTile(leading:Icon(Icons.edit_outlined),title:Text('Düzenle'))),const PopupMenuItem(value:'delete',child:ListTile(leading:Icon(Icons.delete_outline),title:Text('Sil')))]);
+  @override Widget build(BuildContext context)=>AppBackground(child:AnimatedBuilder(animation:session,builder:(context,_){final buildings=session.locations.where((l)=>l['type']=='building').toList();return RefreshIndicator(onRefresh:session.refresh,child:ListView(physics:const AlwaysScrollableScrollPhysics(),padding:const EdgeInsets.only(bottom:100),children:[MobileTopBar(title:'Binalar ve Odalar',subtitle:'Bina → oda → dolap yönetimi',actions:[if(session.canManage)IconButton(tooltip:'Bina ekle',onPressed:()=>_edit(context,type:'building'),icon:const Icon(Icons.add_circle_outline,color:AppTheme.cyan))]),Padding(padding:const EdgeInsets.symmetric(horizontal:18),child:buildings.isEmpty?Panel(child:Column(children:[const Text('Henüz bina oluşturulmamış.',style:TextStyle(color:AppTheme.muted)),if(session.canManage)...[const SizedBox(height:14),PrimaryButton(text:'BİNA EKLE',icon:Icons.add_business,onPressed:()=>_edit(context,type:'building'))]])):Column(children:buildings.map((b){final bid=int.tryParse('${b['id']}')??0;final rooms=session.locations.where((l)=>l['type']=='room'&&int.tryParse('${l['parent_id']}')==bid).toList();return Padding(padding:const EdgeInsets.only(bottom:12),child:Panel(padding:EdgeInsets.zero,child:ExpansionTile(shape:const Border(),collapsedShape:const Border(),leading:Container(width:42,height:42,decoration:BoxDecoration(color:AppTheme.cyan.withOpacity(.12),borderRadius:BorderRadius.circular(12)),child:const Icon(Icons.apartment,color:AppTheme.cyan)),title:Text(b['name']?.toString()??'Bina',style:const TextStyle(fontWeight:FontWeight.w900)),subtitle:Text('${rooms.length} oda',style:const TextStyle(color:AppTheme.muted,fontSize:11)),trailing:session.canManage?_menu(context,b,type:'building'):const Icon(Icons.expand_more),children:[if(rooms.isEmpty)Padding(padding:const EdgeInsets.fromLTRB(18,0,18,18),child:Row(children:[const Expanded(child:Text('Bu binada oda yok.',style:TextStyle(color:AppTheme.muted))),if(session.canManage)TextButton.icon(onPressed:()=>_edit(context,type:'room',parent:bid),icon:const Icon(Icons.add),label:const Text('Oda'))]))else...rooms.map((r){final rid=int.tryParse('${r['id']}')??0;final cabinets=session.locations.where((l)=>l['type']=='cabinet'&&int.tryParse('${l['parent_id']}')==rid).toList();return Column(children:[ListTile(contentPadding:const EdgeInsets.fromLTRB(18,2,8,2),leading:const Icon(Icons.meeting_room_outlined,color:AppTheme.green),title:Text(r['name']?.toString()??'Oda',style:const TextStyle(fontWeight:FontWeight.w800)),subtitle:Text('${cabinets.length} dolap',style:const TextStyle(color:AppTheme.muted,fontSize:10)),trailing:session.canManage?_menu(context,r,type:'room'):const Icon(Icons.chevron_right),onTap:()=>Navigator.push(context,MaterialPageRoute(builder:(_)=>RoomDetailScreen(session:session,room:r,building:b)))),if(cabinets.isNotEmpty)...cabinets.map((cab)=>Padding(padding:const EdgeInsets.only(left:30),child:ListTile(dense:true,leading:const Icon(Icons.inventory_2_outlined,color:AppTheme.cyan,size:20),title:Text(cab['name']?.toString()??'Dolap'),subtitle:const Text('Odaya bağlı alt konum',style:TextStyle(color:AppTheme.muted,fontSize:9)),trailing:session.canManage?_menu(context,cab,type:'cabinet'):null)))]);})])));} ).toList()))]))]);}));}
