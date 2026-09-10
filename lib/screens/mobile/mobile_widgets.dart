@@ -70,32 +70,59 @@ class MetricTile extends StatelessWidget {
       );
 }
 
-String metricLabel(String metric) {
+Map<String, dynamic> _metricInfo(String metric, [Map<String, dynamic>? catalog]) {
+  final raw = catalog?[metric];
+  if (raw is Map) return Map<String, dynamic>.from(raw);
+  return const {};
+}
+
+String metricLabel(String metric, [Map<String, dynamic>? catalog]) {
+  final label = _metricInfo(metric, catalog)['label'];
+  if (label is String && label.trim().isNotEmpty) return label;
   switch (metric) {
     case 'temperature': return 'Sıcaklık';
-    case 'humidity': return 'Nem';
+    case 'humidity': return 'Bağıl Nem';
     case 'dew_point': return 'Çiğ Noktası';
-    case 'pressure': return 'Basınç';
     case 'co2': return 'CO₂';
-    case 'rainfall': return 'Yağış';
-    case 'wind_speed': return 'Rüzgâr Hızı';
-    case 'wind_direction': return 'Rüzgâr Yönü';
-    case 'solar_radiation': return 'Güneş Radyasyonu';
+    case 'voc': return 'VOC';
+    case 'voc_ppb': return 'VOC';
+    case 'voc_ug_m3': return 'VOC';
+    case 'pm1_0': return 'PM1.0';
+    case 'pm2_5': return 'PM2.5';
+    case 'pm10': return 'PM10';
+    case 'pressure': return 'Atmosfer Basıncı';
+    case 'light': return 'Işık Şiddeti';
+    case 'noise': return 'Gürültü';
+    case 'air_speed': return 'Hava Hızı';
+    case 'aqi': return 'Hava Kalitesi AQI';
+    case 'smoke': return 'Duman';
+    case 'fire': return 'Yangın';
+    case 'battery': return 'Batarya Seviyesi';
+    case 'signal_strength': return 'Sinyal Gücü';
     default: return metric.replaceAll('_', ' ');
   }
 }
 
-String metricUnit(String metric) {
+String metricUnit(String metric, [Map<String, dynamic>? catalog]) {
+  final unit = _metricInfo(metric, catalog)['unit'];
+  if (unit is String) return unit;
   switch (metric) {
     case 'temperature':
     case 'dew_point': return '°C';
-    case 'humidity': return '%';
-    case 'pressure': return 'hPa';
+    case 'humidity': return '%RH';
     case 'co2': return 'ppm';
-    case 'rainfall': return 'mm';
-    case 'wind_speed': return 'm/s';
-    case 'wind_direction': return '°';
-    case 'solar_radiation': return 'W/m²';
+    case 'voc': return 'ppb/µg/m³';
+    case 'voc_ppb': return 'ppb';
+    case 'voc_ug_m3':
+    case 'pm1_0':
+    case 'pm2_5':
+    case 'pm10': return 'µg/m³';
+    case 'pressure': return 'hPa';
+    case 'light': return 'lux';
+    case 'noise': return 'dB';
+    case 'air_speed': return 'm/s';
+    case 'battery': return '%';
+    case 'signal_strength': return 'dBm';
     default: return '';
   }
 }
