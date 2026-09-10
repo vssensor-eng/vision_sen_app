@@ -21,10 +21,13 @@ class AppSession extends ChangeNotifier {
 
   Map<String, dynamic> get user => Map<String, dynamic>.from(bundle['user'] as Map? ?? const {});
   Map<String, dynamic> get company => Map<String, dynamic>.from(bundle['company'] as Map? ?? const {});
+  Map<String, dynamic> get metricCatalog => Map<String, dynamic>.from(bundle['metrics'] as Map? ?? const {});
   List<Map<String, dynamic>> get locations => _mapList(bundle['locations']);
   List<Map<String, dynamic>> get devices => _mapList(bundle['devices']);
   List<Map<String, dynamic>> get sensors => _mapList(bundle['sensors']);
   List<Map<String, dynamic>> get alarms => _mapList(bundle['alarms']);
+
+  bool get canManage => user['manager'] == true || user['role'] == 'manager';
 
   static List<Map<String, dynamic>> _mapList(dynamic raw) {
     if (raw is! List) return const [];
@@ -111,6 +114,11 @@ class AppSession extends ChangeNotifier {
     required int locationId,
     required List<String> metrics,
   }) async {
+    if (!canManage) {
+      error = 'Cihaz eklemek için firma yöneticisi yetkisi gerekir.';
+      notifyListeners();
+      return false;
+    }
     busy = true;
     error = null;
     notifyListeners();
