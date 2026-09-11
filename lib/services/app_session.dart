@@ -117,13 +117,6 @@ class AppSession extends ChangeNotifier {
     }
   }
 
-  void replaceOpenAlarms(List<Map<String, dynamic>> items) {
-    final next = Map<String, dynamic>.from(bundle);
-    next['alarms'] = items;
-    bundle = next;
-    notifyListeners();
-  }
-
   Future<bool> _mutate(
     Future<Map<String, dynamic>> Function() action,
     String fallback,
