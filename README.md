@@ -1,24 +1,22 @@
-# VisionSen Mobil — v1.4.1
+# VisionSen Mobil — v1.4.2
 
-VisionSen Mobil, **Ortam İzleme 2.5.50 no-cron + Mobil API** ile çalışır. Mevcut BLE cihaz yapılandırma akışı değiştirilmemiştir; BLE yalnız login sonrasında **Yapılandır > BAŞLAYALIM** ile açılır.
+VisionSen Mobil, **Ortam İzleme 2.5.50 no-cron + Mobil API** ile çalışır. BLE cihaz yapılandırma akışı yalnız login sonrasında **Yapılandır > BAŞLAYALIM** ile açılır.
+
+## v1.4.2 düzeltmeleri
+- v1.4.1'de eklenen yerel sesli Android alarm bildirimi, bildirim izni ve 20 saniyelik alarm notification watcher kaldırıldı. Alarmlar uygulamanın ekranlarında görüntülenmeye devam eder.
+- Konum/harita özelliği yoktur; `ACCESS_FINE_LOCATION` ve `ACCESS_COARSE_LOCATION` kullanılmaz. BLE yalnız `BLUETOOTH_SCAN` + `BLUETOOTH_CONNECT` ister.
+- İlk BLE bağlantısında Android eşleştirmesi tamamlanmadan şifreli GATT okumaya geçilmez. `flutter_blue_plus` 1.35.8 kullanılır, bond durumu beklenir ve ilk encrypted INFO okuması gerektiğinde kısa aralıklarla yeniden denenir.
+- Tarama listesinde Android'in önbellekte tutabildiği `platformName` yerine güncel advertisement adı önceliklidir.
+- Mobil provisioning paketi artık `device_name` alanını da gönderir.
+- Kalıcı özel BLE cihaz adı için **VS-ESP firmware 1.3.9+** gerekir. Firmware adı NVS'te saklar ve sonraki gerçek güç açılışındaki BLE reklamında kullanır. Eski firmware sürümleri özel adı kalıcı saklamaz.
 
 ## Alt navigasyon
-- Ana — zengin sistem özeti: bina/oda/cihaz/sensör/alarm sayıları, sistem sağlığı, son alarmlar, çevrimdışı cihazlar ve hızlı erişim
-- Detay — web panelindeki Detay Görünüm mantığı: bina/oda/dolap seçimi, canlı sensör kartları, ikonlar, 24 saat trend, alarmlar ve cihazlar
+- Ana — sistem sağlığı, bina/oda/cihaz/sensör/alarm sayıları, son alarmlar, çevrimdışı cihazlar ve hızlı erişim
+- Detay — bina/oda/dolap seçimi, canlı sensör kartları, ikonlar, 24 saat trend, alarmlar ve cihazlar
 - Binalar — bina/oda/dolap ekleme, düzenleme ve silme
 - Cihazlar — cihaz ekleme, düzenleme, silme ve sensör yönetimi
-- Yapılandır — mevcut BLE provisioning akışı
+- Yapılandır — BLE provisioning akışı
 - Profil — hesap/firma bilgileri ve çıkış
-
-## Konum izni
-Uygulama konum/harita özelliği kullanmaz. Android manifestinden `ACCESS_FINE_LOCATION` ve `ACCESS_COARSE_LOCATION` kaldırılır. BLE taraması Android 12+ tarafında `BLUETOOTH_SCAN` + `BLUETOOTH_CONNECT` ve `neverForLocation` ile çalışır.
-
-## Alarm bildirimi
-Login sonrasında uygulama açık alarm listesini 20 saniyede bir kontrol eder. Yeni bir alarm ilk kez açıldığında Android sistem bildirimi oluşturulur, yüksek öncelikli alarm sesi ve titreşim kullanılır. Aynı açık alarm her sorguda tekrar çalmaz; alarm kapanıp daha sonra yeni kayıt olarak açılırsa yeniden bildirim gelir.
-
-Android 13+ cihazlarda yalnızca **Bildirimlere izin ver** izni istenir. Konum izni istenmez.
-
-Bu sürümde bildirim takibi uygulama süreci çalıştığı sürece REST alarm sorgusu ile yapılır. Uygulama işletim sistemi tarafından tamamen kapatıldığında/killed durumda anlık teslimat için sonraki adım FCM push entegrasyonudur; bunun için Firebase `google-services.json` ve sunucu gönderim kimlik bilgileri gerekir.
 
 ## Yönetim
 Firma yöneticisi mobil uygulamadan bina, oda, dolap, cihaz ve sensör oluşturabilir/düzenleyebilir/silebilir. Sensörler veri modelinde **cihaza bağlıdır**; cihaz oda veya dolaba atanır. İzleme personeli salt okunur erişim kullanır.
