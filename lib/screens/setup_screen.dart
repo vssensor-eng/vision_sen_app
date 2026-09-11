@@ -44,8 +44,6 @@ class _SetupScreenState extends State<SetupScreen> {
       return;
     }
 
-    // Firmware yalnızca ayarları kalıcı hafızaya başarıyla yazdıktan sonra
-    // SAVED gönderir. Wi-Fi/sunucu bağlantısı burada yapay olarak simüle edilmez.
     await widget.ble.disconnect();
     if (!mounted) return;
     Navigator.pushReplacement(
@@ -55,13 +53,7 @@ class _SetupScreenState extends State<SetupScreen> {
   }
 
   String _explain(String? code) {
-    // ble_service.writeConfiguration() yerel doğrulama hatalarında zaten
-    // okunabilir Türkçe bir mesaj koyar (cihaz "ERROR:" öneki KULLANMAZ);
-    // bu durumda mesajı olduğu gibi göster, cihaz hatası sanıp yanlış
-    // ("Bluetooth kesildi" gibi) bir açıklama üretme.
-    if (code != null && !code.startsWith('ERROR:')) {
-      return code;
-    }
+    if (code != null && !code.startsWith('ERROR:')) return code;
     switch (code) {
       case 'ERROR:SSID':
         return 'Cihaz WiFi ağ adını reddetti. SSID boş olamaz.';
@@ -72,9 +64,11 @@ class _SetupScreenState extends State<SetupScreen> {
       case 'ERROR:SERIAL':
         return 'Cihaz seri numarasını reddetti. Gerçek seri numarasını kullanın; 1-64 karakter ve yalnızca harf, rakam, tire/alt çizgi olabilir.';
       case 'ERROR:KEY_LENGTH':
-        return 'Cihaz firma anahtarını reddetti. 6-128 karakter ve geçerli karakterlerden oluşmalıdır.';
+        return 'Cihaz firma anahtarını reddetti. 32-128 karakter ve geçerli karakterlerden oluşmalıdır.';
       case 'ERROR:KEY_MISMATCH':
         return 'Bu cihaz daha önce kurulmuş. Girilen firma anahtarı cihazda kayıtlı mevcut firma anahtarıyla eşleşmiyor. Doğru mevcut firma anahtarını girip tekrar deneyin.';
+      case 'ERROR:DEVICE_NAME':
+        return 'Cihaz adı BLE reklamı için geçersiz. Adı boş bırakmayın, kontrol karakteri kullanmayın ve en fazla 28 UTF-8 byte kullanın.';
       case 'ERROR:JSON':
       case 'ERROR:TOO_LARGE':
         return 'Ayar paketi cihaza eksik veya bozuk ulaştı. Cihaza yaklaşıp tekrar deneyin.';
@@ -95,14 +89,25 @@ class _SetupScreenState extends State<SetupScreen> {
                 StepHeader(step: 8, title: 'KURULUM'),
                 const SizedBox(height: 38),
                 if (failed) ...[
-                  const Icon(Icons.error_outline, size: 72, color: Colors.redAccent),
+                  const Icon(
+                    Icons.error_outline,
+                    size: 72,
+                    color: Colors.redAccent,
+                  ),
                   const SizedBox(height: 18),
-                  const Text('Ayarlar cihaza gönderilemedi', style: TextStyle(fontSize: 17, fontWeight: FontWeight.w700)),
+                  const Text(
+                    'Ayarlar cihaza gönderilemedi',
+                    style: TextStyle(fontSize: 17, fontWeight: FontWeight.w700),
+                  ),
                   const SizedBox(height: 10),
                   Text(
                     _explain(errorCode),
                     textAlign: TextAlign.center,
-                    style: const TextStyle(color: AppTheme.muted, fontSize: 13, height: 1.4),
+                    style: const TextStyle(
+                      color: AppTheme.muted,
+                      fontSize: 13,
+                      height: 1.4,
+                    ),
                   ),
                   const Spacer(),
                   PrimaryButton(text: 'TEKRAR DENE', onPressed: _start),
@@ -110,11 +115,16 @@ class _SetupScreenState extends State<SetupScreen> {
                   const SizedBox(
                     width: 130,
                     height: 130,
-                    child: CircularProgressIndicator(strokeWidth: 7, color: AppTheme.cyan),
+                    child: CircularProgressIndicator(
+                      strokeWidth: 7,
+                      color: AppTheme.cyan,
+                    ),
                   ),
                   const SizedBox(height: 26),
                   Text(
-                    sending ? 'Ayarlar cihaza güvenli BLE bağlantısı üzerinden gönderiliyor...' : 'Tamamlanıyor...',
+                    sending
+                        ? 'Ayarlar cihaza güvenli BLE bağlantısı üzerinden gönderiliyor...'
+                        : 'Tamamlanıyor...',
                     textAlign: TextAlign.center,
                     style: const TextStyle(color: Colors.white70, fontSize: 15),
                   ),
@@ -127,7 +137,11 @@ class _SetupScreenState extends State<SetupScreen> {
                         Expanded(
                           child: Text(
                             'Bu ekran yalnızca cihazın ayarları kabul edip kalıcı hafızaya kaydetmesini bekler. Wi-Fi ve sunucu erişimi sonraki cihaz çalışma döngüsünde gerçekleşir.',
-                            style: TextStyle(color: AppTheme.muted, fontSize: 12, height: 1.4),
+                            style: TextStyle(
+                              color: AppTheme.muted,
+                              fontSize: 12,
+                              height: 1.4,
+                            ),
                           ),
                         ),
                       ],
