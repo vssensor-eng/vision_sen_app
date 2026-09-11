@@ -4,6 +4,8 @@ import 'package:visionsen_setup/models/device.dart';
 const validKeyA = 'ABCDEF0123456789ABCDEF0123456789';
 const validKeyB = '1234567890ABCDEF1234567890ABCDEF';
 
+String repeatedA(int count) => List.filled(count, 'A').join();
+
 DeviceConfig baseConfig() => DeviceConfig()
   ..deviceName = 'VisionSen Test'
   ..ssid = 'TestWifi'
@@ -22,12 +24,12 @@ void main() {
       final valid = baseConfig();
       expect(valid.validate(), isNull);
 
-      valid.companyKey = 'A' * 31;
+      valid.companyKey = repeatedA(31);
       expect(valid.validate(), contains('32-128'));
     });
 
     test('company key rejects unsupported characters', () {
-      final c = baseConfig()..companyKey = '${'A' * 31} ';
+      final c = baseConfig()..companyKey = '${repeatedA(31)} ';
       expect(c.validate(), contains('yalnızca harf'));
     });
 
@@ -35,7 +37,7 @@ void main() {
       final c = baseConfig()..deviceName = '';
       expect(c.validate(), contains('Cihaz adı boş'));
 
-      c.deviceName = 'A' * 29;
+      c.deviceName = repeatedA(29);
       expect(c.validate(), contains('28 UTF-8 byte'));
 
       c.deviceName = 'VisionSen Oda 1';
@@ -68,7 +70,7 @@ void main() {
       c.companyKey = c.currentCompanyKey;
       expect(c.validate(), isNull);
 
-      c.currentCompanyKey = '${'A' * 31} ';
+      c.currentCompanyKey = '${repeatedA(31)} ';
       c.companyKey = c.currentCompanyKey;
       expect(c.validate(), contains('yalnızca harf'));
     });
