@@ -5,7 +5,7 @@ VisionSen Mobil, **Ortam İzleme 2.5.50 no-cron + Mobil API** ile çalışır. B
 ## v1.4.2 düzeltmeleri
 - v1.4.1'de eklenen yerel sesli Android alarm bildirimi, `POST_NOTIFICATIONS` izni ve 20 saniyelik alarm notification watcher kaldırıldı. Alarmlar uygulamanın ekranlarında görüntülenmeye devam eder.
 - Konum/harita özelliği yoktur; `ACCESS_FINE_LOCATION` ve `ACCESS_COARSE_LOCATION` kullanılmaz. BLE yalnız `BLUETOOTH_SCAN` + `BLUETOOTH_CONNECT` ister.
-- İlk BLE bağlantısında Android eşleştirmesi tamamlanmadan şifreli GATT okumaya geçilmez. `flutter_blue_plus` 1.35.8 kullanılır, bond durumu beklenir ve ilk encrypted INFO okuması gerektiğinde kısa aralıklarla yeniden denenir.
+- İlk BLE bağlantısında Android eşleştirmesi tamamlanmadan şifreli GATT okumaya geçilmez. Uygulama `bondState` üzerinden `bonded` durumunu ayrıca bekler ve ilk encrypted INFO okuması gerektiğinde kısa aralıklarla yeniden dener.
 - Tarama listesinde Android'in önbellekte tutabildiği `platformName` yerine güncel advertisement adı önceliklidir.
 - Mobil provisioning paketi artık `device_name` alanını da gönderir.
 - Kalıcı özel BLE cihaz adı için **VS-ESP firmware 1.3.9+** gerekir. Firmware adı NVS'te saklar ve sonraki gerçek güç açılışındaki BLE reklamında kullanır. Eski firmware sürümleri özel adı kalıcı saklamaz.
