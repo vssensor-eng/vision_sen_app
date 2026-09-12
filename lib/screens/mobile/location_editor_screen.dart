@@ -148,7 +148,11 @@ class _LocationEditorScreenState extends State<LocationEditorScreen> {
     }
 
     num? areaM2;
-    if (_type == 'room' && _area.text.trim().isNotEmpty) {
+    if (_type == 'room') {
+      if (_area.text.trim().isEmpty) {
+        showSessionMessage(context, 'Oda alanını m² olarak girin.');
+        return;
+      }
       areaM2 = num.tryParse(_area.text.trim().replaceAll(',', '.'));
       if (areaM2 == null || areaM2 <= 0 || areaM2 > 100000) {
         showSessionMessage(context, 'Oda alanı 0 ile 100000 m² arasında olmalı.');
@@ -285,8 +289,9 @@ class _LocationEditorScreenState extends State<LocationEditorScreen> {
                       controller: _area,
                       keyboardType: const TextInputType.numberWithOptions(decimal: true),
                       decoration: const InputDecoration(
-                        labelText: 'Oda alanı (m², opsiyonel)',
+                        labelText: 'Oda alanı (m²)',
                         prefixIcon: Icon(Icons.square_foot),
+                        helperText: 'Web panelinde olduğu gibi zorunludur.',
                       ),
                     ),
                   ],
