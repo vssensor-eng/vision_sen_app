@@ -69,6 +69,8 @@ class _SetupScreenState extends State<SetupScreen> {
         return 'Bu cihaz daha önce kurulmuş. Girilen firma anahtarı cihazda kayıtlı mevcut firma anahtarıyla eşleşmiyor. Doğru mevcut firma anahtarını girip tekrar deneyin.';
       case 'ERROR:DEVICE_NAME':
         return 'Cihaz adı BLE reklamı için geçersiz. Adı boş bırakmayın, kontrol karakteri kullanmayın ve en fazla 28 UTF-8 byte kullanın.';
+      case 'ERROR:SEND_INTERVAL':
+        return 'Gönderim aralığı cihaz tarafından reddedildi. OIM3 v2.0.2 yalnızca 1, 5 veya 15 dakika değerlerini kabul eder.';
       case 'ERROR:JSON':
       case 'ERROR:TOO_LARGE':
         return 'Ayar paketi cihaza eksik veya bozuk ulaştı. Cihaza yaklaşıp tekrar deneyin.';
@@ -89,11 +91,7 @@ class _SetupScreenState extends State<SetupScreen> {
                 StepHeader(step: 8, title: 'KURULUM'),
                 const SizedBox(height: 38),
                 if (failed) ...[
-                  const Icon(
-                    Icons.error_outline,
-                    size: 72,
-                    color: Colors.redAccent,
-                  ),
+                  const Icon(Icons.error_outline, size: 72, color: Colors.redAccent),
                   const SizedBox(height: 18),
                   const Text(
                     'Ayarlar cihaza gönderilemedi',
