@@ -26,6 +26,25 @@ class AppSession extends ChangeNotifier {
   List<Map<String, dynamic>> get devices => _mapList(bundle['devices']);
   List<Map<String, dynamic>> get sensors => _mapList(bundle['sensors']);
   List<Map<String, dynamic>> get alarms => _mapList(bundle['alarms']);
+  List<String> get timezones {
+    final raw = bundle['timezones'];
+    if (raw is! List) {
+      return const ['UTC', 'Europe/Istanbul'];
+    }
+    final zones = raw
+        .whereType<String>()
+        .map((zone) => zone.trim())
+        .where((zone) => zone.isNotEmpty)
+        .toSet()
+        .toList();
+    if (!zones.contains('UTC')) zones.insert(0, 'UTC');
+    final companyZone = company['timezone']?.toString().trim() ?? '';
+    if (companyZone.isNotEmpty && !zones.contains(companyZone)) {
+      zones.add(companyZone);
+    }
+    zones.sort();
+    return zones;
+  }
   bool get canManage => user['manager'] == true || user['role'] == 'manager';
 
   static List<Map<String, dynamic>> _mapList(dynamic raw) => raw is List
