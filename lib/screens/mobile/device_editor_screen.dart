@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../../models/device.dart';
 import '../../services/app_session.dart';
 import '../../widgets/app_shell.dart';
 import 'mobile_widgets.dart';
@@ -19,9 +20,23 @@ class DeviceEditorScreen extends StatefulWidget {
 }
 
 class _DeviceEditorScreenState extends State<DeviceEditorScreen> {
+  static const _defaultTimezones = [
+    'Europe/Istanbul',
+    'UTC',
+    'Europe/London',
+    'Europe/Berlin',
+    'Europe/Paris',
+    'Asia/Dubai',
+    'Asia/Baku',
+    'Asia/Riyadh',
+    'America/New_York',
+  ];
+
   late final TextEditingController _name;
   late final TextEditingController _code;
   int? _locationId;
+  late String _timezone;
+  late int _sendInterval;
 
   @override
   void initState() {
@@ -29,6 +44,13 @@ class _DeviceEditorScreenState extends State<DeviceEditorScreen> {
     _name = TextEditingController(text: widget.device['name']?.toString() ?? '');
     _code = TextEditingController(text: widget.device['code']?.toString() ?? '');
     _locationId = int.tryParse('${widget.device['location_id']}');
+    final zone = widget.device['timezone']?.toString().trim() ?? '';
+    final companyZone = widget.session.company['timezone']?.toString().trim() ?? '';
+    _timezone = zone.isNotEmpty
+        ? zone
+        : (companyZone.isNotEmpty ? companyZone : 'Europe/Istanbul');
+    final rawInterval = int.tryParse('${widget.device['send_interval_minutes']}') ?? 1;
+    _sendInterval = DeviceConfig.isSupportedSendInterval(rawInterval) ? rawInterval : 1;
   }
 
   @override
@@ -37,6 +59,8 @@ class _DeviceEditorScreenState extends State<DeviceEditorScreen> {
     _code.dispose();
     super.dispose();
   }
+
+  List<String> _timezones() => <String>{_timezone, ..._defaultTimezones}.toList();
 
   Future<void> _save() async {
     if (_name.text.trim().isEmpty) {
@@ -48,6 +72,8 @@ class _DeviceEditorScreenState extends State<DeviceEditorScreen> {
       name: _name.text.trim(),
       code: _code.text.trim(),
       locationId: _locationId,
+      timezone: _timezone,
+      sendIntervalMinutes: _sendInterval,
     );
     if (!mounted) return;
     if (ok) {
@@ -114,14 +140,47 @@ class _DeviceEditorScreenState extends State<DeviceEditorScreen> {
                           .map(
                             (item) => DropdownMenuItem<int>(
                               value: int.tryParse('${item['id']}'),
-                              child: Text(
-                                locationPath(widget.session.locations, item['id']),
-                              ),
+                              child: Text(locationPath(widget.session.locations, item['id'])),
                             ),
                           )
                           .where((item) => item.value != null),
                     ],
                     onChanged: (value) => setState(() => _locationId = value),
+                  ),
+                  const SizedBox(height: 12),
+                  DropdownButtonFormField<String>(
+                    value: _timezone,
+                    decoration: const InputDecoration(
+                      labelText: 'Saat dilimi',
+                      prefixIcon: Icon(Icons.public),
+                    ),
+                    items: _timezones()
+                        .map(
+                          (zone) => DropdownMenuItem<String>(value: zone, child: Text(zone)),
+                        )
+                        .toList(),
+                    onChanged: (value) {
+                      if (value != null) setState(() => _timezone = value);
+                    },
+                  ),
+                  const SizedBox(height: 12),
+                  DropdownButtonFormField<int>(
+                    value: _sendInterval,
+                    decoration: const InputDecoration(
+                      labelText: 'Gönderim aralığı',
+                      prefixIcon: Icon(Icons.schedule_send_outlined),
+                    ),
+                    items: DeviceConfig.supportedSendIntervals
+                        .map(
+                          (minutes) => DropdownMenuItem<int>(
+                            value: minutes,
+                            child: Text('$minutes dakika'),
+                          ),
+                        )
+                        .toList(),
+                    onChanged: (value) {
+                      if (value != null) setState(() => _sendInterval = value);
+                    },
                   ),
                   const SizedBox(height: 18),
                   PrimaryButton(
