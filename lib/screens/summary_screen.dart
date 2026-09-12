@@ -21,30 +21,43 @@ class SummaryScreen extends StatelessWidget {
             children: [
               StepHeader(step: 7, title: 'AYAR ÖZETİ'),
               Panel(
-                child: Column(children: [
-                  _r('Cihaz Adı', config.deviceName.isEmpty ? '—' : config.deviceName),
-                  _r('Seri Numarası', config.serial.isEmpty ? '—' : config.serial),
-                  _r('WiFi Ağı', config.ssid.isEmpty ? '—' : config.ssid),
-                  _r('WiFi Şifresi', config.password.isEmpty ? '—' : '•' * config.password.length),
-                  if (config.deviceAlreadyConfigured) ...[
-                    _r(
-                      'Mevcut Firma Anahtarı',
-                      config.currentCompanyKey.isEmpty ? '—' : '${config.currentCompanyKey.length} karakter (doğrulama için)',
-                    ),
-                    _r(
-                      'Firma Anahtarı Değişikliği',
-                      config.changeCompanyKey ? 'Yeni anahtar kaydedilecek' : 'Yapılmayacak',
-                    ),
-                    if (config.changeCompanyKey)
+                child: Column(
+                  children: [
+                    _r('Cihaz Adı', config.deviceName.isEmpty ? '—' : config.deviceName),
+                    _r('Seri Numarası', config.serial.isEmpty ? '—' : config.serial),
+                    _r('WiFi Ağı', config.ssid.isEmpty ? '—' : config.ssid),
+                    _r('WiFi Şifresi', config.password.isEmpty ? '—' : '•' * config.password.length),
+                    if (config.deviceAlreadyConfigured) ...[
                       _r(
-                        'Yeni Firma Anahtarı',
+                        'Mevcut Firma Anahtarı',
+                        config.currentCompanyKey.isEmpty
+                            ? '—'
+                            : '${config.currentCompanyKey.length} karakter (doğrulama için)',
+                      ),
+                      _r(
+                        'Firma Anahtarı Değişikliği',
+                        config.changeCompanyKey ? 'Yeni anahtar kaydedilecek' : 'Yapılmayacak',
+                      ),
+                      if (config.changeCompanyKey)
+                        _r(
+                          'Yeni Firma Anahtarı',
+                          config.companyKey.isEmpty ? '—' : '${config.companyKey.length} karakter',
+                        ),
+                    ] else
+                      _r(
+                        'Firma Anahtarı',
                         config.companyKey.isEmpty ? '—' : '${config.companyKey.length} karakter',
                       ),
-                  ] else
-                    _r('Firma Anahtarı', config.companyKey.isEmpty ? '—' : '${config.companyKey.length} karakter'),
-                  _r('Sunucu', config.serverUrl.isEmpty ? '—' : (Uri.tryParse(config.serverUrl)?.host ?? config.serverUrl)),
-                  _r('Zaman Dilimi', config.timezone),
-                ]),
+                    _r(
+                      'Sunucu',
+                      config.serverUrl.isEmpty
+                          ? '—'
+                          : (Uri.tryParse(config.serverUrl)?.host ?? config.serverUrl),
+                    ),
+                    _r('Zaman Dilimi', config.timezone),
+                    _r('Gönderim Aralığı', '${config.sendIntervalMinutes} dakika'),
+                  ],
+                ),
               ),
               const SizedBox(height: 18),
               if (error != null)
@@ -54,11 +67,18 @@ class SummaryScreen extends StatelessWidget {
                     borderRadius: BorderRadius.circular(14),
                     border: Border.all(color: Colors.redAccent.withOpacity(.5)),
                   ),
-                  child: Row(children: [
-                    const Icon(Icons.error_outline, color: Colors.redAccent),
-                    const SizedBox(width: 10),
-                    Expanded(child: Text(error, style: const TextStyle(color: Colors.redAccent, fontSize: 12))),
-                  ]),
+                  child: Row(
+                    children: [
+                      const Icon(Icons.error_outline, color: Colors.redAccent),
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: Text(
+                          error,
+                          style: const TextStyle(color: Colors.redAccent, fontSize: 12),
+                        ),
+                      ),
+                    ],
+                  ),
                 )
               else
                 Container(
@@ -67,11 +87,18 @@ class SummaryScreen extends StatelessWidget {
                     borderRadius: BorderRadius.circular(14),
                     border: Border.all(color: AppTheme.green.withOpacity(.4)),
                   ),
-                  child: const Row(children: [
-                    Icon(Icons.shield_outlined, color: AppTheme.green),
-                    SizedBox(width: 10),
-                    Expanded(child: Text('Bilgiler BLE bağlantısı üzerinden cihazınıza gönderilecektir.', style: TextStyle(color: AppTheme.green, fontSize: 12))),
-                  ]),
+                  child: const Row(
+                    children: [
+                      Icon(Icons.shield_outlined, color: AppTheme.green),
+                      SizedBox(width: 10),
+                      Expanded(
+                        child: Text(
+                          'Bilgiler BLE bağlantısı üzerinden cihazınıza gönderilecektir.',
+                          style: TextStyle(color: AppTheme.green, fontSize: 12),
+                        ),
+                      ),
+                    ],
+                  ),
                 ),
               const Spacer(),
               if (error != null)
@@ -88,7 +115,12 @@ class SummaryScreen extends StatelessWidget {
                 PrimaryButton(
                   text: 'CİHAZI GÜNCELLE',
                   icon: Icons.upload_rounded,
-                  onPressed: () => Navigator.push(context, MaterialPageRoute(builder: (_) => SetupScreen(config: config, ble: ble))),
+                  onPressed: () => Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                      builder: (_) => SetupScreen(config: config, ble: ble),
+                    ),
+                  ),
                 ),
             ],
           ),
@@ -99,10 +131,18 @@ class SummaryScreen extends StatelessWidget {
 
   Widget _r(String a, String b) => Padding(
         padding: const EdgeInsets.symmetric(vertical: 8),
-        child: Row(children: [
-          Text(a, style: const TextStyle(color: AppTheme.muted)),
-          const Spacer(),
-          Flexible(child: Text(b, textAlign: TextAlign.right, style: const TextStyle(fontWeight: FontWeight.w700))),
-        ]),
+        child: Row(
+          children: [
+            Text(a, style: const TextStyle(color: AppTheme.muted)),
+            const Spacer(),
+            Flexible(
+              child: Text(
+                b,
+                textAlign: TextAlign.right,
+                style: const TextStyle(fontWeight: FontWeight.w700),
+              ),
+            ),
+          ],
+        ),
       );
 }
