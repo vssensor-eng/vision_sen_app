@@ -118,8 +118,12 @@ class _VerifyScreenState extends State<VerifyScreen> {
     setState(() => step = 3);
 
     final configured = deviceInfo['configured'] == true;
-    final savedDeviceName =
-        (deviceInfo['device_name'] ?? '').toString().trim();
+    final savedDeviceName = (deviceInfo['device_name'] ?? '').toString().trim();
+    final rawInterval = deviceInfo['send_interval_minutes'];
+    final savedInterval = rawInterval is int
+        ? rawInterval
+        : int.tryParse('${rawInterval ?? ''}');
+
     widget.config.deviceAlreadyConfigured = configured;
     if (serial.isNotEmpty &&
         !DeviceConfig.isPlaceholderSerial(serial) &&
@@ -130,6 +134,10 @@ class _VerifyScreenState extends State<VerifyScreen> {
       widget.config.deviceName = savedDeviceName;
     } else if (widget.config.deviceName.isEmpty) {
       widget.config.deviceName = widget.device.name;
+    }
+    if (savedInterval != null &&
+        DeviceConfig.isSupportedSendInterval(savedInterval)) {
+      widget.config.sendIntervalMinutes = savedInterval;
     }
 
     if (!mounted) return;
@@ -156,11 +164,9 @@ class _VerifyScreenState extends State<VerifyScreen> {
                 height: 120,
                 decoration: BoxDecoration(
                   shape: BoxShape.circle,
-                  color: (failed ? Colors.redAccent : AppTheme.green)
-                      .withOpacity(.1),
+                  color: (failed ? Colors.redAccent : AppTheme.green).withOpacity(.1),
                   border: Border.all(
-                    color: (failed ? Colors.redAccent : AppTheme.green)
-                        .withOpacity(.5),
+                    color: (failed ? Colors.redAccent : AppTheme.green).withOpacity(.5),
                   ),
                 ),
                 child: Icon(
@@ -177,10 +183,7 @@ class _VerifyScreenState extends State<VerifyScreen> {
                         ? 'Cihaz doğrulandı'
                         : 'Cihazla şifreli BLE bağlantısı kuruluyor...',
                 textAlign: TextAlign.center,
-                style: const TextStyle(
-                  fontSize: 16,
-                  fontWeight: FontWeight.w700,
-                ),
+                style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w700),
               ),
               const SizedBox(height: 16),
               if (failed)
@@ -189,10 +192,7 @@ class _VerifyScreenState extends State<VerifyScreen> {
                     padding: const EdgeInsets.all(4),
                     child: Text(
                       errorText,
-                      style: const TextStyle(
-                        color: AppTheme.muted,
-                        fontSize: 13,
-                      ),
+                      style: const TextStyle(color: AppTheme.muted, fontSize: 13),
                     ),
                   ),
                 )
@@ -206,9 +206,7 @@ class _VerifyScreenState extends State<VerifyScreen> {
                         leading: Icon(
                           i < step
                               ? Icons.check_circle
-                              : (i == step
-                                  ? Icons.sync
-                                  : Icons.radio_button_unchecked),
+                              : (i == step ? Icons.sync : Icons.radio_button_unchecked),
                           color: i < step
                               ? AppTheme.green
                               : (i == step ? AppTheme.cyan : Colors.white24),
@@ -223,33 +221,26 @@ class _VerifyScreenState extends State<VerifyScreen> {
                   Panel(
                     child: Column(
                       children: [
-                        _row(
-                          'Seri Numarası',
-                          (info!['serial'] ?? '-').toString(),
-                        ),
+                        _row('Seri Numarası', (info!['serial'] ?? '-').toString()),
                         _row(
                           'Cihaz Tipi',
                           VisionSenCompatibility.deviceTypeLabel(
                             (info!['device_type'] ?? '').toString(),
                           ),
                         ),
-                        _row(
-                          'BLE Protokolü',
-                          'v${info!['protocol_version']}',
-                        ),
+                        _row('BLE Protokolü', 'v${info!['protocol_version']}'),
                         _row(
                           'Firmware',
                           ((info!['fw'] ?? '').toString().trim().isEmpty)
                               ? '—'
                               : info!['fw'].toString(),
                         ),
-                        if ((info!['device_name'] ?? '')
-                            .toString()
-                            .trim()
-                            .isNotEmpty)
+                        if ((info!['device_name'] ?? '').toString().trim().isNotEmpty)
+                          _row('Kayıtlı BLE Adı', info!['device_name'].toString()),
+                        if (info!['send_interval_minutes'] != null)
                           _row(
-                            'Kayıtlı BLE Adı',
-                            info!['device_name'].toString(),
+                            'Gönderim Aralığı',
+                            '${info!['send_interval_minutes']} dakika',
                           ),
                         _row('MAC', (info!['mac'] ?? '-').toString()),
                         _row(
@@ -290,19 +281,13 @@ class _VerifyScreenState extends State<VerifyScreen> {
         padding: const EdgeInsets.symmetric(vertical: 6),
         child: Row(
           children: [
-            Text(
-              a,
-              style: const TextStyle(color: AppTheme.muted, fontSize: 13),
-            ),
+            Text(a, style: const TextStyle(color: AppTheme.muted, fontSize: 13)),
             const Spacer(),
             Flexible(
               child: Text(
                 b,
                 textAlign: TextAlign.right,
-                style: const TextStyle(
-                  fontWeight: FontWeight.w600,
-                  fontSize: 13,
-                ),
+                style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 13),
               ),
             ),
           ],
