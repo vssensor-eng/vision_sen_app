@@ -20,18 +20,6 @@ class DeviceEditorScreen extends StatefulWidget {
 }
 
 class _DeviceEditorScreenState extends State<DeviceEditorScreen> {
-  static const _defaultTimezones = [
-    'Europe/Istanbul',
-    'UTC',
-    'Europe/London',
-    'Europe/Berlin',
-    'Europe/Paris',
-    'Asia/Dubai',
-    'Asia/Baku',
-    'Asia/Riyadh',
-    'America/New_York',
-  ];
-
   late final TextEditingController _name;
   late final TextEditingController _code;
   int? _locationId;
@@ -60,7 +48,11 @@ class _DeviceEditorScreenState extends State<DeviceEditorScreen> {
     super.dispose();
   }
 
-  List<String> _timezones() => <String>{_timezone, ..._defaultTimezones}.toList();
+  List<String> _timezones() {
+    final zones = <String>{_timezone, ...widget.session.timezones}.toList();
+    zones.sort();
+    return zones;
+  }
 
   Future<void> _save() async {
     if (_name.text.trim().isEmpty) {
