@@ -16,18 +16,6 @@ class AddDeviceScreen extends StatefulWidget {
 }
 
 class _AddDeviceScreenState extends State<AddDeviceScreen> {
-  static const _defaultTimezones = [
-    'Europe/Istanbul',
-    'UTC',
-    'Europe/London',
-    'Europe/Berlin',
-    'Europe/Paris',
-    'Asia/Dubai',
-    'Asia/Baku',
-    'Asia/Riyadh',
-    'America/New_York',
-  ];
-
   final _name = TextEditingController();
   final _code = TextEditingController();
   int? _buildingId;
@@ -66,8 +54,9 @@ class _AddDeviceScreenState extends State<AddDeviceScreen> {
   }
 
   List<String> _timezones() {
-    final zones = <String>{_timezone, ..._defaultTimezones};
-    return zones.toList();
+    final zones = <String>{_timezone, ...widget.session.timezones}.toList();
+    zones.sort();
+    return zones;
   }
 
   List<Map<String, dynamic>> get _buildings => widget.session.locations
