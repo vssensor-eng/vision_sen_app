@@ -38,20 +38,30 @@ class _ServerScreenState extends State<ServerScreen> {
               child: Column(
                 children: [
                   StepHeader(step: 6, title: 'SUNUCU BİLGİLERİ'),
-                  const CircleAvatar(radius: 42, backgroundColor: AppTheme.panel2, child: Icon(Icons.language, size: 44, color: AppTheme.cyan)),
+                  const CircleAvatar(
+                    radius: 42,
+                    backgroundColor: AppTheme.panel2,
+                    child: Icon(Icons.language, size: 44, color: AppTheme.cyan),
+                  ),
                   const SizedBox(height: 24),
                   TextField(
                     controller: url,
                     maxLines: 2,
-                    onChanged: (_) { if (error != null) setState(() => error = null); },
-                    decoration: InputDecoration(labelText: 'API / POST Adresi', hintText: 'https://sunucu-adresi.com/...', errorText: error),
+                    onChanged: (_) {
+                      if (error != null) setState(() => error = null);
+                    },
+                    decoration: InputDecoration(
+                      labelText: 'API / POST Adresi',
+                      hintText: 'https://sunucu-adresi.com/...',
+                      errorText: error,
+                    ),
                   ),
                   const SizedBox(height: 8),
-                  Align(
+                  const Align(
                     alignment: Alignment.centerLeft,
                     child: Text(
                       'Cihaz hem http:// hem https:// destekler; güvenlik ayrıca cihazın gönderdiği dijital imza ile sağlanır.',
-                      style: const TextStyle(color: AppTheme.muted, fontSize: 11),
+                      style: TextStyle(color: AppTheme.muted, fontSize: 11),
                     ),
                   ),
                   const SizedBox(height: 18),
@@ -59,10 +69,41 @@ class _ServerScreenState extends State<ServerScreen> {
                     value: widget.config.timezone,
                     decoration: const InputDecoration(labelText: 'Zaman Dilimi'),
                     items: const [
-                      DropdownMenuItem(value: '(UTC+03:00) İstanbul', child: Text('(UTC+03:00) İstanbul')),
-                      DropdownMenuItem(value: '(UTC+00:00) UTC', child: Text('(UTC+00:00) UTC')),
+                      DropdownMenuItem(
+                        value: '(UTC+03:00) İstanbul',
+                        child: Text('(UTC+03:00) İstanbul'),
+                      ),
+                      DropdownMenuItem(
+                        value: '(UTC+00:00) UTC',
+                        child: Text('(UTC+00:00) UTC'),
+                      ),
                     ],
-                    onChanged: (v) => setState(() => widget.config.timezone = v!),
+                    onChanged: (v) {
+                      if (v != null) setState(() => widget.config.timezone = v);
+                    },
+                  ),
+                  const SizedBox(height: 14),
+                  DropdownButtonFormField<int>(
+                    value: widget.config.sendIntervalMinutes,
+                    decoration: const InputDecoration(
+                      labelText: 'Sunucuya gönderim aralığı',
+                      prefixIcon: Icon(Icons.schedule_send_outlined),
+                      helperText: 'Sensör ölçümü 1 dakikada bir sürer; yalnız gönderim sıklığı değişir.',
+                      helperMaxLines: 2,
+                    ),
+                    items: DeviceConfig.supportedSendIntervals
+                        .map(
+                          (minutes) => DropdownMenuItem<int>(
+                            value: minutes,
+                            child: Text('$minutes dakika'),
+                          ),
+                        )
+                        .toList(),
+                    onChanged: (value) {
+                      if (value != null) {
+                        setState(() => widget.config.sendIntervalMinutes = value);
+                      }
+                    },
                   ),
                   const SizedBox(height: 30),
                   PrimaryButton(
@@ -75,7 +116,15 @@ class _ServerScreenState extends State<ServerScreen> {
                         return;
                       }
                       widget.config.serverUrl = value;
-                      Navigator.push(c, MaterialPageRoute(builder: (_) => SummaryScreen(config: widget.config, ble: widget.ble)));
+                      Navigator.push(
+                        c,
+                        MaterialPageRoute(
+                          builder: (_) => SummaryScreen(
+                            config: widget.config,
+                            ble: widget.ble,
+                          ),
+                        ),
+                      );
                     },
                   ),
                 ],
