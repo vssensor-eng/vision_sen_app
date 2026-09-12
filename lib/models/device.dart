@@ -52,6 +52,7 @@ class BleDeviceModel {
 class DeviceConfig {
   static const placeholderSerial = 'ESP-000125';
   static const int maxBleDeviceNameBytes = 28;
+  static const List<int> supportedSendIntervals = [1, 5, 15];
 
   String deviceName = '';
   String serial = '';
@@ -60,6 +61,7 @@ class DeviceConfig {
   String companyKey = '';
   String serverUrl = '';
   String timezone = '(UTC+03:00) İstanbul';
+  int sendIntervalMinutes = 1;
 
   bool deviceAlreadyConfigured = false;
   String currentCompanyKey = '';
@@ -74,6 +76,9 @@ class DeviceConfig {
       deviceAlreadyConfigured && !changeCompanyKey
           ? currentCompanyKey
           : companyKey;
+
+  static bool isSupportedSendInterval(int value) =>
+      supportedSendIntervals.contains(value);
 
   static String? validateCompanyKey(
     String value, {
@@ -142,6 +147,9 @@ class DeviceConfig {
     final deviceNameError = validateDeviceName(deviceName);
     if (deviceNameError != null) return deviceNameError;
 
+    if (!isSupportedSendInterval(sendIntervalMinutes)) {
+      return 'Gönderim aralığı yalnızca 1, 5 veya 15 dakika olabilir.';
+    }
     if (ssid.trim().isEmpty) return 'WiFi ağ adı (SSID) boş olamaz.';
     if (serial.trim().isEmpty) return 'Seri numarası boş olamaz.';
     if (isPlaceholderSerial(serial)) {
