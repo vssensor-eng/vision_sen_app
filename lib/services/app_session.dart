@@ -149,6 +149,8 @@ class AppSession extends ChangeNotifier {
     required String name,
     required String code,
     required int locationId,
+    required String timezone,
+    required int sendIntervalMinutes,
     required List<String> metrics,
   }) =>
       _mutate(
@@ -156,6 +158,8 @@ class AppSession extends ChangeNotifier {
           name: name,
           code: code,
           locationId: locationId,
+          timezone: timezone,
+          sendIntervalMinutes: sendIntervalMinutes,
           metrics: metrics,
         ),
         'Cihaz eklenemedi.',
@@ -166,6 +170,8 @@ class AppSession extends ChangeNotifier {
     required String name,
     required String code,
     int? locationId,
+    required String timezone,
+    required int sendIntervalMinutes,
   }) =>
       _mutate(
         () => api.updateDevice(
@@ -173,6 +179,8 @@ class AppSession extends ChangeNotifier {
           name: name,
           code: code,
           locationId: locationId,
+          timezone: timezone,
+          sendIntervalMinutes: sendIntervalMinutes,
         ),
         'Cihaz güncellenemedi.',
       );
@@ -187,6 +195,8 @@ class AppSession extends ChangeNotifier {
     int? parentId,
     String description = '',
     String address = '',
+    String usageType = '',
+    num? areaM2,
   }) =>
       _mutate(
         () => id == null
@@ -196,6 +206,8 @@ class AppSession extends ChangeNotifier {
                 parentId: parentId,
                 description: description,
                 address: address,
+                usageType: usageType,
+                areaM2: areaM2,
               )
             : api.updateLocation(
                 id,
@@ -204,6 +216,8 @@ class AppSession extends ChangeNotifier {
                 parentId: parentId,
                 description: description,
                 address: address,
+                usageType: usageType,
+                areaM2: areaM2,
               ),
         'Konum kaydedilemedi.',
       );
