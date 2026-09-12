@@ -30,9 +30,7 @@ class MobileApiService {
 
   Map<String, String> _headers({bool json = false}) {
     final headers = <String, String>{'Accept': 'application/json'};
-    if (json) {
-      headers['Content-Type'] = 'application/json; charset=utf-8';
-    }
+    if (json) headers['Content-Type'] = 'application/json; charset=utf-8';
     final currentToken = token;
     if (currentToken != null && currentToken.isNotEmpty) {
       headers['Authorization'] = 'Bearer $currentToken';
@@ -118,20 +116,14 @@ class MobileApiService {
   Future<Map<String, dynamic>> history(int sensorId, {int hours = 24}) async {
     final response = await _client
         .get(
-          _uri('/mobile/history', {
-            'sensor_id': '$sensorId',
-            'hours': '$hours',
-          }),
+          _uri('/mobile/history', {'sensor_id': '$sensorId', 'hours': '$hours'}),
           headers: _headers(),
         )
         .timeout(const Duration(seconds: 20));
     return _decode(response);
   }
 
-  Future<Map<String, dynamic>> alarms({
-    String state = 'open',
-    int page = 1,
-  }) async {
+  Future<Map<String, dynamic>> alarms({String state = 'open', int page = 1}) async {
     final response = await _client
         .get(
           _uri('/mobile/alarms', {'state': state, 'page': '$page'}),
@@ -145,12 +137,16 @@ class MobileApiService {
     required String name,
     required String code,
     required int locationId,
+    required String timezone,
+    required int sendIntervalMinutes,
     required List<String> metrics,
   }) {
     return _write('POST', '/mobile/devices', {
       'name': name,
       'code': code,
       'location_id': locationId,
+      'timezone': timezone,
+      'send_interval_minutes': sendIntervalMinutes,
       'metrics': metrics,
     });
   }
@@ -160,11 +156,15 @@ class MobileApiService {
     required String name,
     required String code,
     int? locationId,
+    required String timezone,
+    required int sendIntervalMinutes,
   }) {
     return _write('PUT', '/mobile/devices/$id', {
       'name': name,
       'code': code,
       'location_id': locationId,
+      'timezone': timezone,
+      'send_interval_minutes': sendIntervalMinutes,
     });
   }
 
@@ -178,6 +178,8 @@ class MobileApiService {
     int? parentId,
     String description = '',
     String address = '',
+    String usageType = '',
+    num? areaM2,
   }) {
     return _write('POST', '/mobile/locations', {
       'name': name,
@@ -185,6 +187,8 @@ class MobileApiService {
       'parent_id': parentId,
       'description': description,
       'address': type == 'building' ? address : null,
+      'usage_type': type == 'building' || type == 'room' ? usageType : null,
+      'area_m2': type == 'room' ? areaM2 : null,
     });
   }
 
@@ -195,6 +199,8 @@ class MobileApiService {
     int? parentId,
     String description = '',
     String address = '',
+    String usageType = '',
+    num? areaM2,
   }) {
     return _write('PUT', '/mobile/locations/$id', {
       'name': name,
@@ -202,6 +208,8 @@ class MobileApiService {
       'parent_id': parentId,
       'description': description,
       'address': type == 'building' ? address : null,
+      'usage_type': type == 'building' || type == 'room' ? usageType : null,
+      'area_m2': type == 'room' ? areaM2 : null,
     });
   }
 
