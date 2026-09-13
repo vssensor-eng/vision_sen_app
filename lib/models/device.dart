@@ -3,11 +3,11 @@ import 'dart:convert';
 class VisionSenCompatibility {
   static const String environmentMonitor = 'environment_monitor';
 
-  /// Destek kararı firmware numarasından bağımsızdır. Cihaz tipi ve BLE
-  /// protokol sürümü birlikte değerlendirilir; tanımlı olmayan hiçbir eşleşme
+  /// Destek kararı firmware numarasından bağımsızdır. Cihaz tipi ve Wi-Fi
+  /// provisioning protokol sürümü birlikte değerlendirilir; tanımlı olmayan hiçbir eşleşme
   /// kurulum akışına alınmaz.
   static const Map<String, Set<int>> supportedIdentities = {
-    environmentMonitor: {1},
+    environmentMonitor: {2},
   };
 
   static bool isSupportedProtocol(int value) =>
@@ -29,29 +29,9 @@ class VisionSenCompatibility {
   }
 }
 
-class BleDeviceModel {
-  final String id;
-  final String name;
-  final String mac;
-  final int rssi;
-  final bool isVisionSen;
-  final bool? configured;
-  final int? protocolVersion;
-
-  const BleDeviceModel({
-    required this.id,
-    required this.name,
-    required this.mac,
-    required this.rssi,
-    required this.isVisionSen,
-    required this.configured,
-    required this.protocolVersion,
-  });
-}
-
 class DeviceConfig {
   static const placeholderSerial = 'ESP-000125';
-  static const int maxBleDeviceNameBytes = 28;
+  static const int maxDeviceNameBytes = 28;
   static const List<int> supportedSendIntervals = [1, 5, 15];
 
   String deviceName = '';
@@ -67,7 +47,6 @@ class DeviceConfig {
   String currentCompanyKey = '';
   bool changeCompanyKey = false;
 
-  // Firmware isValidCompanyKey() ile aynı sınırlar.
   static const int minCompanyKeyLength = 32;
   static const int maxCompanyKeyLength = 128;
   static final RegExp _companyKeyPattern = RegExp(r'^[A-Za-z0-9._:-]+$');
@@ -97,8 +76,8 @@ class DeviceConfig {
     final name = value.trim();
     if (name.isEmpty) return 'Cihaz adı boş olamaz.';
     final byteLength = utf8.encode(name).length;
-    if (byteLength > maxBleDeviceNameBytes) {
-      return 'Cihaz adı BLE için en fazla $maxBleDeviceNameBytes UTF-8 byte olabilir (şu an $byteLength byte).';
+    if (byteLength > maxDeviceNameBytes) {
+      return 'Cihaz adı en fazla $maxDeviceNameBytes UTF-8 byte olabilir (şu an $byteLength byte).';
     }
     for (final rune in name.runes) {
       if (rune < 0x20 || rune == 0x7F) {
@@ -120,8 +99,8 @@ class DeviceConfig {
     }
 
     final uri = Uri.tryParse(raw);
-    if (uri == null || (uri.scheme != 'http' && uri.scheme != 'https')) {
-      return 'Sunucu adresi http:// veya https:// ile başlamalı.';
+    if (uri == null || uri.scheme != 'https') {
+      return 'Sunucu adresi https:// ile başlamalı.';
     }
     if (uri.host.isEmpty) {
       return 'Sunucu adresinde geçerli bir alan adı veya IP bulunmalı.';
@@ -142,7 +121,6 @@ class DeviceConfig {
     return null;
   }
 
-  /// Firmware'in doğruladığı kurallarla aynı kontroller.
   String? validate() {
     final deviceNameError = validateDeviceName(deviceName);
     if (deviceNameError != null) return deviceNameError;
@@ -151,6 +129,14 @@ class DeviceConfig {
       return 'Gönderim aralığı yalnızca 1, 5 veya 15 dakika olabilir.';
     }
     if (ssid.trim().isEmpty) return 'WiFi ağ adı (SSID) boş olamaz.';
+    if (utf8.encode(ssid).length > 32) {
+      return 'WiFi ağ adı en fazla 32 byte olabilir.';
+    }
+    final passwordBytes = utf8.encode(password).length;
+    if (passwordBytes > 64) return 'WiFi şifresi en fazla 64 byte olabilir.';
+    if (passwordBytes == 64 && !RegExp(r'^[0-9A-Fa-f]{64}$').hasMatch(password)) {
+      return '64 karakterlik WiFi şifresi yalnız hexadecimal PSK olabilir.';
+    }
     if (serial.trim().isEmpty) return 'Seri numarası boş olamaz.';
     if (isPlaceholderSerial(serial)) {
       return '$placeholderSerial örnek seri numarası kullanılamaz; gerçek cihaz seri numarasını girin.';
