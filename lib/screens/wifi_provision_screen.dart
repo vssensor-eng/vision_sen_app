@@ -36,6 +36,8 @@ class _WifiProvisionScreenState extends State<WifiProvisionScreen> {
   bool _changeCompanyKey = false;
   int _sendInterval = 1;
   Map<String, dynamic>? _deviceInfo;
+  List<ProvisioningWifiDevice> _foundDevices = const [];
+  String? _connectingSsid;
   String? _message;
   bool _messageIsError = false;
 
@@ -50,7 +52,10 @@ class _WifiProvisionScreenState extends State<WifiProvisionScreen> {
 
   void _onConnectionChanged() {
     if (!mounted) return;
-    if (!_provision.isConnected) _deviceInfo = null;
+    if (!_provision.isConnected) {
+      _deviceInfo = null;
+      _connectingSsid = null;
+    }
     setState(() {});
   }
 
@@ -75,19 +80,53 @@ class _WifiProvisionScreenState extends State<WifiProvisionScreen> {
     });
   }
 
-  Future<void> _connect() async {
+  Future<void> _scanDevices() async {
+    if (_busy || _connected) return;
+    setState(() {
+      _busy = true;
+      _saved = false;
+      _foundDevices = const [];
+      _message = 'Yakındaki VisionSen cihazları taranıyor...';
+      _messageIsError = false;
+    });
+
+    final devices = await _provision.scanDevices();
+    if (!mounted) return;
+    setState(() {
+      _busy = false;
+      _foundDevices = devices;
+    });
+
+    if (devices.isEmpty) {
+      _setMessage(
+        _provision.lastError ?? 'Yakında VisionSen kurulum cihazı bulunamadı.',
+        error: true,
+      );
+      return;
+    }
+
+    _setMessage(
+      '${devices.length} VisionSen cihazı bulundu. Bağlanmak istediğiniz cihazı seçin.',
+    );
+  }
+
+  Future<void> _connectDevice(ProvisioningWifiDevice device) async {
     if (_busy) return;
     setState(() {
       _busy = true;
       _saved = false;
-      _message = null;
+      _connectingSsid = device.ssid;
+      _message = '${device.ssid} cihazına bağlanılıyor...';
       _messageIsError = false;
     });
 
-    final connected = await _provision.connectToDevice();
+    final connected = await _provision.connectToDevice(device.ssid);
     if (!mounted) return;
     if (!connected) {
-      setState(() => _busy = false);
+      setState(() {
+        _busy = false;
+        _connectingSsid = null;
+      });
       _setMessage(
         _provision.lastError ?? 'VisionSen cihazına bağlanılamadı.',
         error: true,
@@ -105,7 +144,10 @@ class _WifiProvisionScreenState extends State<WifiProvisionScreen> {
     if (!mounted) return;
 
     if (info == null) {
-      setState(() => _busy = false);
+      setState(() {
+        _busy = false;
+        _connectingSsid = null;
+      });
       _setMessage(
         _provision.lastError ?? 'VisionSen cihazına ulaşılamadı.',
         error: true,
@@ -121,7 +163,10 @@ class _WifiProvisionScreenState extends State<WifiProvisionScreen> {
         !VisionSenCompatibility.isSupportedIdentity(deviceType, protocol)) {
       await _provision.disconnect();
       if (!mounted) return;
-      setState(() => _busy = false);
+      setState(() {
+        _busy = false;
+        _connectingSsid = null;
+      });
       _setMessage(
         'Seçilen ağ desteklenen VisionSen OIM3 kurulum cihazı değil.',
         error: true,
@@ -148,11 +193,12 @@ class _WifiProvisionScreenState extends State<WifiProvisionScreen> {
       _busy = false;
       _deviceInfo = info;
       _saved = false;
+      _connectingSsid = null;
     });
     _setMessage(
       configured
-          ? 'Cihaz bulundu. Ayar değişikliği için mevcut firma anahtarını girin.'
-          : 'Cihaz bulundu. Wi-Fi ve sunucu bilgilerini doldurup kaydedin.',
+          ? 'Cihaz bulundu ve yerel API doğrulandı. Ayar değişikliği için mevcut firma anahtarını girin.'
+          : 'Cihaz bulundu ve yerel API doğrulandı. Wi-Fi ve sunucu bilgilerini doldurup kaydedin.',
     );
   }
 
@@ -164,6 +210,7 @@ class _WifiProvisionScreenState extends State<WifiProvisionScreen> {
     setState(() {
       _busy = false;
       _deviceInfo = null;
+      _connectingSsid = null;
     });
     if (showMessage) {
       _setMessage(
@@ -219,6 +266,8 @@ class _WifiProvisionScreenState extends State<WifiProvisionScreen> {
       _busy = false;
       _saved = true;
       _deviceInfo = null;
+      _foundDevices = const [];
+      _connectingSsid = null;
     });
     _setMessage(
       'Ayarlar kaydedildi. Cihaz bağlantısı kapatıldı; ESP yeniden başlıyor ve hedef Wi-Fi ağına bağlanacak.',
@@ -270,6 +319,72 @@ class _WifiProvisionScreenState extends State<WifiProvisionScreen> {
     );
   }
 
+  IconData _signalIcon(int bars) {
+    if (bars >= 4) return Icons.signal_wifi_4_bar;
+    if (bars == 3) return Icons.network_wifi_3_bar;
+    if (bars == 2) return Icons.network_wifi_2_bar;
+    return Icons.network_wifi_1_bar;
+  }
+
+  Widget _deviceList() {
+    if (_foundDevices.isEmpty || _connected) return const SizedBox.shrink();
+    return Panel(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              const Expanded(
+                child: Text(
+                  'Bulunan VisionSen cihazları',
+                  style: TextStyle(fontWeight: FontWeight.w900),
+                ),
+              ),
+              TextButton.icon(
+                onPressed: _busy ? null : _scanDevices,
+                icon: const Icon(Icons.refresh, size: 18),
+                label: const Text('Yenile'),
+              ),
+            ],
+          ),
+          const SizedBox(height: 6),
+          ..._foundDevices.map(
+            (device) => Container(
+              margin: const EdgeInsets.only(top: 8),
+              decoration: BoxDecoration(
+                color: AppTheme.panel2,
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(color: AppTheme.line),
+              ),
+              child: ListTile(
+                leading: Icon(
+                  _signalIcon(device.signalBars),
+                  color: AppTheme.cyan,
+                ),
+                title: Text(
+                  device.ssid,
+                  style: const TextStyle(fontWeight: FontWeight.w800),
+                ),
+                subtitle: Text(
+                  '${device.rssi} dBm • Kurulum cihazı',
+                  style: const TextStyle(color: AppTheme.muted),
+                ),
+                trailing: _busy && _connectingSsid == device.ssid
+                    ? const SizedBox(
+                        width: 22,
+                        height: 22,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      )
+                    : const Icon(Icons.chevron_right),
+                onTap: _busy ? null : () => _connectDevice(device),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final info = _deviceInfo;
@@ -299,7 +414,7 @@ class _WifiProvisionScreenState extends State<WifiProvisionScreen> {
               ),
               const SizedBox(height: 6),
               const Text(
-                'OIM3 v2.1.3 • Uygulama içi Wi-Fi provisioning',
+                'OIM3 v2.1.3 • Uygulama içi cihaz tarama ve bağlantı',
                 textAlign: TextAlign.center,
                 style: TextStyle(color: AppTheme.green, fontSize: 11.5),
               ),
@@ -315,15 +430,19 @@ class _WifiProvisionScreenState extends State<WifiProvisionScreen> {
                     SizedBox(height: 10),
                     Text('1. ESP32 cihazı kapatıp açın.'),
                     SizedBox(height: 6),
-                    Text('2. CİHAZA BAĞLAN düğmesine dokunun.'),
+                    Text('2. CİHAZLARI BUL düğmesine dokunun.'),
                     SizedBox(height: 6),
                     Text(
-                      '3. Android bağlantı penceresinde VISIONSEN-OIM3-XXXX ağını seçip onaylayın. Uygulamadan çıkmanız gerekmez.',
+                      '3. Uygulamada listelenen VISIONSEN-OIM3 cihazını seçin.',
+                    ),
+                    SizedBox(height: 6),
+                    Text(
+                      '4. Android yalnız seçtiğiniz cihaz ağına bağlanmak için sistem onayı gösterebilir. Wi-Fi ayarlarına çıkılmaz.',
                       style: TextStyle(color: AppTheme.muted),
                     ),
                     SizedBox(height: 6),
                     Text(
-                      'Kurulum bitince veya bu sekmeden ayrılırken cihaz bağlantısı otomatik kapatılır.',
+                      'Uygulama arka plana geçtiğinde, kapatıldığında, sekmeden çıkıldığında veya çıkış yapıldığında cihaz bağlantısı bırakılır.',
                       style: TextStyle(color: AppTheme.muted),
                     ),
                   ],
@@ -335,21 +454,14 @@ class _WifiProvisionScreenState extends State<WifiProvisionScreen> {
                     ? 'İŞLEM YAPILIYOR...'
                     : _connected
                         ? 'CİHAZ BAĞLANTISINI KES'
-                        : 'CİHAZA BAĞLAN',
+                        : 'CİHAZLARI BUL',
                 icon: _connected ? Icons.link_off : Icons.wifi_find,
                 onPressed: _busy
                     ? null
                     : _connected
                         ? () => _disconnect()
-                        : _connect,
+                        : _scanDevices,
               ),
-              if (_connected) ...[
-                const SizedBox(height: 10),
-                SecondaryButton(
-                  text: 'CİHAZI YENİDEN KONTROL ET',
-                  onPressed: _busy ? null : _readInfo,
-                ),
-              ],
               if (_message != null) ...[
                 const SizedBox(height: 12),
                 Container(
@@ -377,6 +489,17 @@ class _WifiProvisionScreenState extends State<WifiProvisionScreen> {
                   ),
                 ),
               ],
+              if (_foundDevices.isNotEmpty && !_connected) ...[
+                const SizedBox(height: 14),
+                _deviceList(),
+              ],
+              if (_connected) ...[
+                const SizedBox(height: 10),
+                SecondaryButton(
+                  text: 'CİHAZI YENİDEN KONTROL ET',
+                  onPressed: _busy ? null : _readInfo,
+                ),
+              ],
               if (_connected && info != null) ...[
                 const SizedBox(height: 14),
                 Panel(
@@ -390,6 +513,9 @@ class _WifiProvisionScreenState extends State<WifiProvisionScreen> {
                       const SizedBox(height: 8),
                       Text(
                         'Kurulum ağı: ${_provision.connectedSsid ?? WifiProvisionService.apNamePattern}',
+                      ),
+                      Text(
+                        'Telefon yerel IP: ${_provision.connectedLocalIp ?? '-'}',
                       ),
                       Text('Firmware: ${info['fw'] ?? '-'}'),
                       Text('Seri no: ${info['serial'] ?? '-'}'),
@@ -555,13 +681,13 @@ class _WifiProvisionScreenState extends State<WifiProvisionScreen> {
                       _deviceInfo = null;
                       _config.deviceAlreadyConfigured = false;
                     });
-                    _connect();
+                    _scanDevices();
                   },
                 ),
               ],
               const SizedBox(height: 20),
               const Text(
-                'Mobil v1.6.1+19 • Uygulama içi Wi-Fi Provisioning Protocol v2',
+                'Mobil v1.6.2+20 • Wi-Fi discovery + DHCP doğrulamalı Provisioning Protocol v2',
                 textAlign: TextAlign.center,
                 style: TextStyle(color: AppTheme.muted, fontSize: 10.5),
               ),
