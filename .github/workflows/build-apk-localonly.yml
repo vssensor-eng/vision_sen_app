@@ -25,10 +25,10 @@ jobs:
           channel: stable
           cache: true
 
-      - name: Prepare Android hardened provisioning
-        run: bash tool/bootstrap_android_v164.sh
+      - name: Prepare Android final provisioning
+        run: bash tool/bootstrap_android_v165.sh
 
-      - name: Verify hardened no-location Wi-Fi design
+      - name: Verify final no-location Wi-Fi design
         shell: bash
         run: |
           set -euo pipefail
@@ -40,17 +40,21 @@ jobs:
           ! grep -q 'scanResults' "$MAIN"
           grep -q 'NEARBY_WIFI_DEVICES' "$MANIFEST"
           grep -q 'neverForLocation' "$MANIFEST"
+          grep -q 'CHANGE_NETWORK_STATE' "$MANIFEST"
+          grep -q 'ACCESS_NETWORK_STATE' "$MANIFEST"
+          grep -q 'CHANGE_WIFI_STATE' "$MANIFEST"
+          ! grep -q 'WRITE_SETTINGS' "$MANIFEST"
           grep -q 'CompanionDeviceManager' "$MAIN"
           grep -q 'WifiDeviceFilter' "$MAIN"
           grep -q 'activeAssociationInfo' "$MAIN"
           grep -q 'releaseActiveAssociation' "$MAIN"
-          grep -q 'postDelayed' "$MAIN"
+          grep -q 'APP_NETWORK_PERMISSION_MISSING' "$MAIN"
+          grep -q 'Manifest.permission.CHANGE_NETWORK_STATE' "$MAIN"
           grep -q 'WIFI_SECURITY' "$MAIN"
           grep -q 'ANDROID_LEGACY_LOCATION_REQUIRED' "$MAIN"
           grep -q 'await _connectDevice(devices.first)' lib/screens/wifi_provision_screen.dart
-          grep -q 'ANDROID_LEGACY_LOCATION_REQUIRED' lib/services/wifi_provision_service.dart
-          grep -q 'WIFI_SECURITY' lib/services/wifi_provision_service.dart
-          grep -q 'version: 1.6.4+22' pubspec.yaml
+          grep -q 'version: 1.6.5+23' pubspec.yaml
+          grep -q 'Mobil v1.6.5+23' lib/screens/wifi_provision_screen.dart
 
       - name: Install dependencies
         run: flutter pub get
@@ -67,5 +71,5 @@ jobs:
       - name: Upload APK artifact
         uses: actions/upload-artifact@v5
         with:
-          name: visionsen-v1.6.4-nearby-permission-fix-ci-apk
+          name: visionsen-v1.6.5-network-state-fix-ci-apk
           path: build/app/outputs/flutter-apk/app-release.apk
