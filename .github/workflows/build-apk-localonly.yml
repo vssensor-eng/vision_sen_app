@@ -28,36 +28,6 @@ jobs:
       - name: Prepare Android hardened provisioning
         run: bash tool/bootstrap_android_v164.sh
 
-      - name: Auto-connect system-selected VisionSen device
-        shell: bash
-        run: |
-          python3 - <<'PYEOF'
-          from pathlib import Path
-          p = Path('lib/screens/wifi_provision_screen.dart')
-          t = p.read_text(encoding='utf-8')
-          old = """    _setMessage(
-                '${devices.length} VisionSen cihazı bulundu. Bağlanmak istediğiniz cihazı seçin.',
-              );
-          """
-          new = """    if (devices.length == 1) {
-                await _connectDevice(devices.first);
-                return;
-              }
-
-              _setMessage(
-                '${devices.length} VisionSen cihazı bulundu. Bağlanmak istediğiniz cihazı seçin.',
-              );
-          """
-          if old not in t:
-              raise SystemExit('auto-connect patch target not found')
-          t = t.replace(old, new, 1)
-          t = t.replace(
-              'Mobil v1.6.3+21 • Konum izinsiz Wi-Fi seçim + DHCP doğrulamalı Provisioning Protocol v2',
-              'Mobil v1.6.4+22 • Konum izinsiz Wi-Fi + sağlamlaştırılmış izin akışı',
-          )
-          p.write_text(t, encoding='utf-8')
-          PYEOF
-
       - name: Verify hardened no-location Wi-Fi design
         shell: bash
         run: |
