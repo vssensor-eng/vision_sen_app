@@ -6,6 +6,20 @@ import 'package:flutter/services.dart';
 
 import '../models/device.dart';
 
+class ProvisioningWifiDevice {
+  final String ssid;
+  final int rssi;
+
+  const ProvisioningWifiDevice({required this.ssid, required this.rssi});
+
+  int get signalBars {
+    if (rssi >= -55) return 4;
+    if (rssi >= -67) return 3;
+    if (rssi >= -75) return 2;
+    return 1;
+  }
+}
+
 class WifiProvisionService {
   static const String deviceBaseUrl = 'http://192.168.4.1';
   static const String apNamePrefix = 'VISIONSEN-OIM3-';
@@ -18,6 +32,7 @@ class WifiProvisionService {
       ValueNotifier<String?>(null);
 
   String? lastError;
+  String? connectedLocalIp;
   bool _closed = false;
 
   WifiProvisionService() {
@@ -29,6 +44,7 @@ class WifiProvisionService {
 
   Future<dynamic> _handleNativeCall(MethodCall call) async {
     if (call.method == 'provisioningDisconnected') {
+      connectedLocalIp = null;
       _setConnection(false);
     }
     return null;
@@ -37,26 +53,115 @@ class WifiProvisionService {
   void _setConnection(bool value, {String? ssid}) {
     if (_closed) return;
     connectionNotifier.value = value;
-    connectedSsidNotifier.value = value ? (ssid ?? connectedSsidNotifier.value) : null;
+    connectedSsidNotifier.value =
+        value ? (ssid ?? connectedSsidNotifier.value) : null;
   }
 
-  Future<bool> connectToDevice() async {
+  String _platformMessage(PlatformException e, String fallback) {
+    final message = e.message?.trim();
+    if (message != null && message.isNotEmpty) return message;
+    return fallback;
+  }
+
+  Future<List<ProvisioningWifiDevice>> scanDevices() async {
+    lastError = null;
+    if (_closed) {
+      lastError = 'Kurulum servisi kapalı.';
+      return const [];
+    }
+
+    try {
+      final result = await _platform.invokeMapMethod<String, dynamic>(
+        'scanProvisioningWifi',
+        const {'ssidPrefix': apNamePrefix},
+      ).timeout(const Duration(seconds: 15));
+
+      if (result == null) {
+        lastError = 'Wi-Fi taramasından yanıt alınamadı.';
+        return const [];
+      }
+      if (result['wifiEnabled'] != true) {
+        lastError =
+            'Telefon Wi-Fi kapalı. Wi-Fi’yi açın ve cihazları tekrar tarayın.';
+        return const [];
+      }
+
+      final raw = result['devices'];
+      if (raw is! List) {
+        lastError = 'VisionSen cihaz tarama sonucu geçersiz.';
+        return const [];
+      }
+
+      final devices = <ProvisioningWifiDevice>[];
+      final seen = <String>{};
+      for (final item in raw) {
+        if (item is! Map) continue;
+        final ssid = item['ssid']?.toString().trim() ?? '';
+        if (!ssid.startsWith(apNamePrefix) || !seen.add(ssid)) continue;
+        final rawRssi = item['rssi'];
+        final rssi = rawRssi is num ? rawRssi.toInt() : -100;
+        devices.add(ProvisioningWifiDevice(ssid: ssid, rssi: rssi));
+      }
+      devices.sort((a, b) => b.rssi.compareTo(a.rssi));
+      if (devices.isEmpty) {
+        lastError =
+            'Yakında açık VisionSen kurulum cihazı bulunamadı. Cihazı kapatıp açın ve tekrar tarayın.';
+      }
+      return devices;
+    } on TimeoutException {
+      lastError = 'VisionSen cihaz taraması zaman aşımına uğradı.';
+      return const [];
+    } on PlatformException catch (e) {
+      switch (e.code) {
+        case 'PERMISSION_DENIED':
+          lastError =
+              'Yakındaki Wi-Fi cihazlarını taramak için gerekli Android izni verilmedi.';
+          break;
+        case 'WIFI_DISABLED':
+          lastError =
+              'Telefon Wi-Fi kapalı. Wi-Fi’yi açın ve tekrar deneyin.';
+          break;
+        default:
+          lastError = _platformMessage(
+            e,
+            'VisionSen cihazları taranamadı.',
+          );
+      }
+      return const [];
+    } catch (_) {
+      lastError = 'VisionSen cihazları taranamadı.';
+      return const [];
+    }
+  }
+
+  Future<bool> connectToDevice(String ssid) async {
     lastError = null;
     if (_closed) {
       lastError = 'Kurulum servisi kapalı.';
       return false;
     }
-    if (isConnected) return true;
+    final selected = ssid.trim();
+    if (!selected.startsWith(apNamePrefix)) {
+      lastError = 'Seçilen ağ bir VisionSen kurulum cihazı değil.';
+      return false;
+    }
+    if (isConnected && connectedSsid == selected) return true;
+
+    try {
+      await _platform.invokeMethod<void>('disconnectProvisioningWifi');
+    } catch (_) {}
+    _setConnection(false);
+    connectedLocalIp = null;
 
     try {
       final result = await _platform.invokeMapMethod<String, dynamic>(
         'connectProvisioningWifi',
-        const {
-          'ssidPrefix': apNamePrefix,
+        {
+          'ssid': selected,
           'password': apPassword,
-          'timeoutMs': 30000,
+          'timeoutMs': 35000,
         },
-      ).timeout(const Duration(seconds: 35));
+      ).timeout(const Duration(seconds: 40));
 
       final connected = result?['connected'] == true;
       if (!connected) {
@@ -65,10 +170,11 @@ class WifiProvisionService {
         return false;
       }
 
-      final ssid = result?['ssid']?.toString().trim();
+      final returnedSsid = result?['ssid']?.toString().trim();
+      connectedLocalIp = result?['localIp']?.toString().trim();
       _setConnection(
         true,
-        ssid: ssid?.isNotEmpty == true ? ssid : apNamePattern,
+        ssid: returnedSsid?.isNotEmpty == true ? returnedSsid : selected,
       );
       return true;
     } on TimeoutException {
@@ -86,17 +192,26 @@ class WifiProvisionService {
           lastError =
               'Uygulama içi cihaz bağlantısı Android 10 veya daha yeni sürüm gerektiriyor.';
           break;
+        case 'WIFI_DISABLED':
+          lastError =
+              'Telefon Wi-Fi kapalı. Wi-Fi’yi açın ve tekrar deneyin.';
+          break;
         case 'WIFI_UNAVAILABLE':
           lastError =
-              'VisionSen kurulum ağı bulunamadı. Cihazı kapatıp açın ve tekrar deneyin.';
+              'Seçilen VisionSen cihazına bağlanılamadı. Cihazı kapatıp açın ve tekrar tarayın.';
           break;
         case 'WIFI_BUSY':
           lastError = 'Başka bir cihaz bağlantı isteği halen devam ediyor.';
           break;
+        case 'DHCP_TIMEOUT':
+          lastError =
+              'Cihaz Wi-Fi bağlantısı kuruldu ancak telefona yerel IP atanamadı. Tekrar deneyin.';
+          break;
         default:
-          lastError = e.message?.trim().isNotEmpty == true
-              ? e.message!.trim()
-              : 'VisionSen cihaz Wi-Fi bağlantısı kurulamadı.';
+          lastError = _platformMessage(
+            e,
+            'VisionSen cihaz Wi-Fi bağlantısı kurulamadı.',
+          );
       }
       return false;
     } catch (_) {
@@ -113,9 +228,9 @@ class WifiProvisionService {
           .invokeMethod<void>('disconnectProvisioningWifi')
           .timeout(const Duration(seconds: 4));
     } catch (_) {
-      // Native request process/activity ömrüyle de sonlandırılır. Dart state'i
-      // her durumda temizlenir; sonraki connect yeni bir request oluşturur.
+      // Native request is also released from Activity lifecycle callbacks.
     } finally {
+      connectedLocalIp = null;
       _setConnection(false);
     }
   }
@@ -140,7 +255,7 @@ class WifiProvisionService {
           'body': body ?? '',
           'timeoutMs': timeoutMs,
         },
-      ).timeout(Duration(milliseconds: timeoutMs + 2500));
+      ).timeout(Duration(milliseconds: timeoutMs + 5000));
 
       if (response == null) {
         lastError = 'Cihazdan boş yanıt alındı.';
@@ -153,11 +268,10 @@ class WifiProvisionService {
     } on PlatformException catch (e) {
       if (e.code == 'NO_PROVISIONING_NETWORK') {
         _setConnection(false);
+        connectedLocalIp = null;
         lastError = 'Cihaz Wi-Fi bağlantısı kesildi. Yeniden bağlanın.';
       } else {
-        lastError = e.message?.trim().isNotEmpty == true
-            ? e.message!.trim()
-            : 'Cihazla yerel bağlantı kurulamadı.';
+        lastError = _platformMessage(e, 'Cihazla yerel bağlantı kurulamadı.');
       }
       return null;
     } catch (_) {
@@ -171,7 +285,7 @@ class WifiProvisionService {
     final response = await _localRequest(
       method: 'GET',
       path: '/api/info',
-      timeoutMs: 4000,
+      timeoutMs: 6500,
     );
     if (response == null) return null;
 
@@ -236,7 +350,7 @@ class WifiProvisionService {
       method: 'POST',
       path: '/api/config',
       body: payload,
-      timeoutMs: 8000,
+      timeoutMs: 9000,
     );
     if (response == null) return false;
 
@@ -258,9 +372,7 @@ class WifiProvisionService {
 
   void close() {
     if (_closed) return;
-    if (isConnected) {
-      _platform.invokeMethod<void>('disconnectProvisioningWifi').catchError((_) {});
-    }
+    _platform.invokeMethod<void>('disconnectProvisioningWifi').catchError((_) {});
     _closed = true;
     _platform.setMethodCallHandler(null);
   }
