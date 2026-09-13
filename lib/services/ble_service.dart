@@ -2,11 +2,12 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
+
 import 'package:flutter_blue_plus/flutter_blue_plus.dart';
 import 'package:permission_handler/permission_handler.dart';
+
 import '../models/device.dart';
 
-/// ESP32 firmware ile birebir eşleşen UUID'ler.
 class _BleUuids {
   static final service = Guid('4fafc201-1fb5-459e-8fcc-c5c9c331914b');
   static final config = Guid('beb5483e-36e1-4688-b7f5-ea07361b26a8');
@@ -23,14 +24,20 @@ class _AdvertisementProtocolInfo {
 class BleService {
   static const bool debugShowAllDevices = false;
 
-  /// Bluetooth adaptörünün güncel durumunu döndürür. Uygulama bu metodu
-  /// çağırırken Bluetooth'u AÇMAZ; yalnızca mevcut durumu okur.
+  BluetoothDevice? _device;
+  BluetoothCharacteristic? _configChar;
+  BluetoothCharacteristic? _statusChar;
+  BluetoothCharacteristic? _infoChar;
+  int? _advertisedProtocolVersion;
+
+  String? lastError;
+  String? lastScanError;
+
   Future<BluetoothAdapterState> getAdapterState() async {
     try {
       if (!await FlutterBluePlus.isSupported) {
         return BluetoothAdapterState.unavailable;
       }
-
       var state = FlutterBluePlus.adapterStateNow;
       if (state == BluetoothAdapterState.unknown ||
           state == BluetoothAdapterState.turningOn ||
@@ -53,9 +60,6 @@ class BleService {
     }
   }
 
-  /// Yalnızca UI katmanı kullanıcıdan açık onay aldıktan SONRA çağrılmalıdır.
-  /// Android'de gerekli CONNECT iznini ister ve ardından sistemin Bluetooth açma
-  /// diyaloğunu başlatır. Kullanıcı sistem isteğini de reddederse false döner.
   Future<bool> enableBluetoothAfterUserConsent() async {
     if (await getAdapterState() == BluetoothAdapterState.on) return true;
     if (!Platform.isAndroid) return false;
@@ -75,31 +79,15 @@ class BleService {
     }
   }
 
-  BluetoothDevice? _device;
-  BluetoothCharacteristic? _configChar;
-  BluetoothCharacteristic? _statusChar;
-  BluetoothCharacteristic? _infoChar;
-  int? _advertisedProtocolVersion;
-
-  /// Cihazın reddettiği son provisioning hata kodu.
-  String? lastError;
-
-  /// Son BLE taramasının kullanıcıya gösterilebilecek hata nedeni. null ise
-  /// tarama teknik olarak tamamlanmıştır; sonuç listesi ayrıca boş olabilir.
-  String? lastScanError;
-
   Future<bool> _ensurePermissions() async {
     final statuses = await [
       Permission.bluetoothScan,
       Permission.bluetoothConnect,
-      Permission.locationWhenInUse,
     ].request();
     return statuses[Permission.bluetoothScan]?.isGranted == true &&
         statuses[Permission.bluetoothConnect]?.isGranted == true;
   }
 
-  /// Firmware scan response içindeki VisionSen üretici verisi:
-  /// company id 0xFFFF, payload = ['V','S', protocol_version, configured=0/1].
   _AdvertisementProtocolInfo? _protocolFromAdvertisement(AdvertisementData data) {
     for (final bytes in data.manufacturerData.values) {
       for (var i = 0; i + 3 < bytes.length; i++) {
@@ -111,67 +99,55 @@ class BleService {
     return null;
   }
 
-  bool _hasVisionSenManufacturerData(AdvertisementData data) =>
-      _protocolFromAdvertisement(data) != null;
+  String _scanName(ScanResult result) {
+    final advertised = result.advertisementData.advName.trim();
+    if (advertised.isNotEmpty) return advertised;
+    final platform = result.device.platformName.trim();
+    if (platform.isNotEmpty) return platform;
+    return '(isimsiz) ${result.device.remoteId.str}';
+  }
 
-  List<BleDeviceModel> _modelsFromScanResults(Iterable<ScanResult> results) {
-    return results.map((r) {
-      String name = r.device.platformName;
-      if (name.isEmpty) name = r.advertisementData.advName;
-      if (name.isEmpty) name = '(isimsiz) ${r.device.remoteId.str}';
+  List<BleDeviceModel> _models(Iterable<ScanResult> results) {
+    return results.map((result) {
+      final name = _scanName(result);
+      final protocol = _protocolFromAdvertisement(result.advertisementData);
       final isVisionSen =
-          r.advertisementData.serviceUuids.contains(_BleUuids.service) ||
+          result.advertisementData.serviceUuids.contains(_BleUuids.service) ||
           name.startsWith('VISIONSEN-ESP-') ||
-          _hasVisionSenManufacturerData(r.advertisementData);
-      final protocolInfo = isVisionSen ? _protocolFromAdvertisement(r.advertisementData) : null;
+          protocol != null;
       return BleDeviceModel(
-        id: r.device.remoteId.str,
+        id: result.device.remoteId.str,
         name: name,
-        mac: r.device.remoteId.str,
-        rssi: r.rssi,
+        mac: result.device.remoteId.str,
+        rssi: result.rssi,
         isVisionSen: isVisionSen,
-        configured: protocolInfo?.configured,
-        protocolVersion: protocolInfo?.protocolVersion,
+        configured: protocol?.configured,
+        protocolVersion: protocol?.protocolVersion,
       );
     }).toList();
   }
 
   bool _scanMetadataImproved(ScanResult? previous, ScanResult current) {
     if (previous == null) return true;
-
     final oldProtocol = _protocolFromAdvertisement(previous.advertisementData);
     final newProtocol = _protocolFromAdvertisement(current.advertisementData);
     if (oldProtocol == null && newProtocol != null) return true;
-    if (oldProtocol != null && newProtocol != null &&
-        (oldProtocol.protocolVersion != newProtocol.protocolVersion ||
-            oldProtocol.configured != newProtocol.configured)) {
-      return true;
+    if (oldProtocol != null && newProtocol != null) {
+      if (oldProtocol.protocolVersion != newProtocol.protocolVersion ||
+          oldProtocol.configured != newProtocol.configured) {
+        return true;
+      }
     }
-
-    final oldName = previous.device.platformName.isNotEmpty
-        ? previous.device.platformName
-        : previous.advertisementData.advName;
-    final newName = current.device.platformName.isNotEmpty
-        ? current.device.platformName
-        : current.advertisementData.advName;
-    if (oldName.isEmpty && newName.isNotEmpty) return true;
-
-    final oldHasService = previous.advertisementData.serviceUuids.contains(_BleUuids.service);
-    final newHasService = current.advertisementData.serviceUuids.contains(_BleUuids.service);
-    return !oldHasService && newHasService;
+    if (_scanName(previous) != _scanName(current)) return true;
+    return !previous.advertisementData.serviceUuids.contains(_BleUuids.service) &&
+        current.advertisementData.serviceUuids.contains(_BleUuids.service);
   }
 
-  /// VisionSen cihazlarını [timeout] boyunca tarar. Bulunan cihazlar tarama
-  /// tamamlanmadan [onUpdate] ile anında UI'a bildirilir. Tarama sırasında aynı
-  /// cihazın RSSI değişimleri gereksiz rebuild oluşturmasın diye yalnızca yeni
-  /// cihaz veya daha zengin kimlik/protokol bilgisi geldiğinde ara güncelleme
-  /// gönderilir. Nihai liste dönüş değerinde en güncel RSSI korunur.
   Future<List<BleDeviceModel>> scan({
     Duration timeout = const Duration(seconds: 60),
     void Function(List<BleDeviceModel> devices)? onUpdate,
   }) async {
     lastScanError = null;
-
     if (await getAdapterState() != BluetoothAdapterState.on) {
       lastScanError = 'Bluetooth kapalı. Bluetooth’u açıp tekrar deneyin.';
       return [];
@@ -182,8 +158,6 @@ class BleService {
       return [];
     }
 
-    // Önceki ekrandan/denemeden açık kalan bir tarama varsa yeni 60 sn'lik
-    // pencereyi temiz başlatmak için kapatılır.
     if (FlutterBluePlus.isScanningNow) {
       try {
         await FlutterBluePlus.stopScan();
@@ -192,39 +166,24 @@ class BleService {
 
     final found = <String, ScanResult>{};
     final sub = FlutterBluePlus.scanResults.listen((results) {
-      var shouldNotify = false;
-      for (final r in results) {
-        if (debugShowAllDevices) {
-          final id = r.device.remoteId.str;
-          if (_scanMetadataImproved(found[id], r)) shouldNotify = true;
-          found[id] = r;
-          continue;
-        }
-
-        final hasService = r.advertisementData.serviceUuids.contains(_BleUuids.service);
-        final name = r.device.platformName.isNotEmpty
-            ? r.device.platformName
-            : r.advertisementData.advName;
-        final nameMatch = name.startsWith('VISIONSEN-ESP-');
-        final manufacturerMatch = _hasVisionSenManufacturerData(r.advertisementData);
-
-        // Android tarafındaki servis UUID tarama filtresine güvenmiyoruz. Tüm
-        // reklamlar alınır ve VisionSen işaretleri uygulama içinde süzülür.
-        if (hasService || nameMatch || manufacturerMatch) {
-          final id = r.device.remoteId.str;
-          if (_scanMetadataImproved(found[id], r)) shouldNotify = true;
-          found[id] = r;
-        }
+      var notify = false;
+      for (final result in results) {
+        final name = _scanName(result);
+        final isVisionSen = debugShowAllDevices ||
+            result.advertisementData.serviceUuids.contains(_BleUuids.service) ||
+            name.startsWith('VISIONSEN-ESP-') ||
+            _protocolFromAdvertisement(result.advertisementData) != null;
+        if (!isVisionSen) continue;
+        final id = result.device.remoteId.str;
+        if (_scanMetadataImproved(found[id], result)) notify = true;
+        found[id] = result;
       }
-
-      if (shouldNotify && onUpdate != null) {
-        onUpdate(_modelsFromScanResults(found.values));
-      }
+      if (notify && onUpdate != null) onUpdate(_models(found.values));
     });
 
     try {
       await FlutterBluePlus.startScan(timeout: timeout);
-      await FlutterBluePlus.isScanning.where((s) => s == false).first;
+      await FlutterBluePlus.isScanning.where((value) => value == false).first;
     } catch (_) {
       lastScanError =
           'Bluetooth taraması başlatılamadı. Bluetooth/izin durumunu kontrol edip tekrar deneyin.';
@@ -236,12 +195,9 @@ class BleService {
         } catch (_) {}
       }
     }
-
-    return _modelsFromScanResults(found.values);
+    return _models(found.values);
   }
 
-  /// Kullanıcı tarama sürerken bir cihaz seçtiğinde çağrılır. Devam eden tarama
-  /// hemen durdurulur; böylece bağlantı kurulurken arka planda BLE scan çalışmaz.
   Future<void> stopScan() async {
     if (!FlutterBluePlus.isScanningNow) return;
     try {
@@ -249,39 +205,45 @@ class BleService {
     } catch (_) {}
   }
 
-  /// Bağlanır ve Android'de bonding'i önden başlatır. Firmware'in INFO/CONFIG
-  /// karakteristikleri şifreli GATT erişimi istediği için bağ başarısızsa
-  /// güvenli okuma/yazma da başarısız olur.
+  Future<bool> _ensureAndroidBond(BluetoothDevice target) async {
+    if (!Platform.isAndroid) return true;
+    try {
+      final current = await target.bondState.first.timeout(const Duration(seconds: 2));
+      if (current == BluetoothBondState.bonded) return true;
+    } catch (_) {}
+
+    try {
+      await target.createBond(timeout: 45);
+      final bonded = await target.bondState
+          .where((state) => state == BluetoothBondState.bonded)
+          .first
+          .timeout(const Duration(seconds: 5));
+      return bonded == BluetoothBondState.bonded;
+    } catch (_) {
+      return false;
+    }
+  }
+
   Future<bool> connect(BleDeviceModel device) async {
     final target = BluetoothDevice.fromId(device.id);
     _advertisedProtocolVersion = device.protocolVersion;
     try {
       await target.connect(timeout: const Duration(seconds: 12), autoConnect: false);
-
-      if (Platform.isAndroid) {
-        try {
-          await target.createBond(timeout: 20);
-        } catch (_) {
-          // Zaten bonded cihazlarda veya üreticiye özgü Android davranışlarında
-          // createBond hata verebilir. Güvenli karakteristik erişimi nihai kontrolü yapar.
-        }
+      if (!await _ensureAndroidBond(target)) {
+        throw Exception('BLE eşleştirme tamamlanamadı');
       }
-
       try {
         await target.requestMtu(247);
       } catch (_) {}
 
       final services = await target.discoverServices();
       final service = services.firstWhere(
-        (s) => s.uuid == _BleUuids.service,
+        (item) => item.uuid == _BleUuids.service,
         orElse: () => throw Exception('VisionSen BLE servisi bulunamadı'),
       );
-
       _configChar = service.characteristics.firstWhere((c) => c.uuid == _BleUuids.config);
       _statusChar = service.characteristics.firstWhere((c) => c.uuid == _BleUuids.status);
       _infoChar = service.characteristics.firstWhere((c) => c.uuid == _BleUuids.info);
-
-      // CCCD de firmware tarafında şifreli erişime zorlanır.
       await _statusChar!.setNotifyValue(true);
       _device = target;
       return true;
@@ -289,55 +251,63 @@ class BleService {
       try {
         await target.disconnect();
       } catch (_) {}
-      _device = null;
-      _configChar = null;
-      _statusChar = null;
-      _infoChar = null;
-      _advertisedProtocolVersion = null;
+      _clearConnection();
       return false;
     }
   }
 
   Future<Map<String, dynamic>?> readDeviceInfo() async {
     if (_infoChar == null) return null;
-    try {
-      final value = await _infoChar!.read();
-      final decoded = jsonDecode(utf8.decode(value, allowMalformed: true));
-      if (decoded is! Map) return null;
+    for (var attempt = 0; attempt < 3; attempt++) {
+      try {
+        final value = await _infoChar!.read();
+        final decoded = jsonDecode(utf8.decode(value, allowMalformed: true));
+        if (decoded is! Map) return null;
+        final info = Map<String, dynamic>.from(decoded);
+        if (info['mac'] is! String || info['configured'] is! bool) return null;
 
-      final info = Map<String, dynamic>.from(decoded);
-      if (info['mac'] is! String || info['configured'] is! bool) return null;
+        final rawProtocol = info['protocol_version'];
+        int? protocolVersion;
+        if (rawProtocol is int) {
+          protocolVersion = rawProtocol;
+        } else if (rawProtocol is num && rawProtocol == rawProtocol.roundToDouble()) {
+          protocolVersion = rawProtocol.toInt();
+        }
+        final rawDeviceType = info['device_type'];
+        final deviceType = rawDeviceType is String ? rawDeviceType.trim() : '';
+        final rawInterval = info['send_interval_minutes'];
+        int? sendInterval;
+        if (rawInterval is int) {
+          sendInterval = rawInterval;
+        } else if (rawInterval is num && rawInterval == rawInterval.roundToDouble()) {
+          sendInterval = rawInterval.toInt();
+        } else {
+          sendInterval = int.tryParse('${rawInterval ?? ''}');
+        }
 
-      // Kimlik alanları zorunludur. Eski firmware için varsayım/fallback yoktur.
-      // Böylece aynı donanımda farklı firmware olsa bile yalnızca açıkça
-      // desteklenen device_type + protocol_version eşleşmesi kabul edilir.
-      final rawProtocol = info['protocol_version'];
-      int? protocolVersion;
-      if (rawProtocol is int) {
-        protocolVersion = rawProtocol;
-      } else if (rawProtocol is num && rawProtocol == rawProtocol.roundToDouble()) {
-        protocolVersion = rawProtocol.toInt();
+        info['protocol_version'] = protocolVersion;
+        info['device_type'] = deviceType;
+        info['send_interval_minutes'] = sendInterval;
+        info['identity_fields_valid'] = protocolVersion != null && deviceType.isNotEmpty;
+        info['advertised_protocol_version'] = _advertisedProtocolVersion;
+        info['protocol_mismatch'] = _advertisedProtocolVersion != null &&
+            protocolVersion != null &&
+            _advertisedProtocolVersion != protocolVersion;
+        return info;
+      } catch (_) {
+        if (attempt < 2) {
+          await Future.delayed(Duration(milliseconds: 500 + (attempt * 350)));
+        }
       }
-
-      final rawDeviceType = info['device_type'];
-      final deviceType = rawDeviceType is String ? rawDeviceType.trim() : '';
-
-      info['protocol_version'] = protocolVersion;
-      info['device_type'] = deviceType;
-      info['identity_fields_valid'] = protocolVersion != null && deviceType.isNotEmpty;
-      info['advertised_protocol_version'] = _advertisedProtocolVersion;
-      info['protocol_mismatch'] = _advertisedProtocolVersion != null &&
-          protocolVersion != null &&
-          _advertisedProtocolVersion != protocolVersion;
-      return info;
-    } catch (_) {
-      return null;
     }
+    return null;
   }
 
   Future<bool> authenticate() async {
     final info = await readDeviceInfo();
-    if (info == null || info['identity_fields_valid'] != true || info['protocol_mismatch'] == true) {
+    if (info == null ||
+        info['identity_fields_valid'] != true ||
+        info['protocol_mismatch'] == true) {
       return false;
     }
     final protocol = info['protocol_version'];
@@ -350,11 +320,8 @@ class BleService {
   Future<bool> writeConfiguration(DeviceConfig config) async {
     if (_configChar == null || _statusChar == null) return false;
     lastError = null;
-
     final validationError = config.validate();
     if (validationError != null) {
-      // Kod (ERROR:...) yerine doğrudan okunabilir mesaj saklanır; setup_screen
-      // bunu "ERROR:" ile başlamayan değerler için olduğu gibi gösterir.
       lastError = validationError;
       return false;
     }
@@ -365,11 +332,9 @@ class BleService {
       'server_url': config.serverUrl,
       'serial': config.serial,
       'company_key': config.effectiveCompanyKey,
-      // Kurulu cihazda firmware mevcut firma anahtarını bununla doğrular.
-      // Firma anahtarı değiştirilmiyorsa effectiveCompanyKey de mevcut anahtardır;
-      // değiştiriliyorsa company_key yeni değeri, auth_key mevcut değeri taşır.
-      // İlk kurulumda auth_key boş gider ve firmware bu alanı kontrol etmez.
       'auth_key': config.deviceAlreadyConfigured ? config.currentCompanyKey : '',
+      'device_name': config.deviceName.trim(),
+      'send_interval_minutes': config.sendIntervalMinutes,
     });
     final bytes = utf8.encode(payload);
     const chunkSize = 180;
@@ -388,9 +353,9 @@ class BleService {
     });
 
     try {
-      for (int i = 0; i < totalChunks; i++) {
+      for (var i = 0; i < totalChunks; i++) {
         final start = i * chunkSize;
-        final end = (start + chunkSize > bytes.length) ? bytes.length : start + chunkSize;
+        final end = start + chunkSize > bytes.length ? bytes.length : start + chunkSize;
         final chunkPayload = bytes.sublist(start, end);
         final packet = Uint8List(2 + chunkPayload.length);
         packet[0] = i;
@@ -398,7 +363,6 @@ class BleService {
         packet.setRange(2, 2 + chunkPayload.length, chunkPayload);
         await _configChar!.write(packet, withoutResponse: false);
       }
-
       return await resultCompleter.future.timeout(
         const Duration(seconds: 10),
         onTimeout: () {
@@ -415,7 +379,14 @@ class BleService {
   }
 
   Future<void> disconnect() async {
-    await _device?.disconnect();
+    try {
+      await _device?.disconnect();
+    } finally {
+      _clearConnection();
+    }
+  }
+
+  void _clearConnection() {
     _device = null;
     _configChar = null;
     _statusChar = null;

@@ -15,31 +15,6 @@ class HomeScreen extends StatefulWidget {
 class _HomeScreenState extends State<HomeScreen> {
   final BleService _ble = BleService();
   bool _bluetoothActionRunning = false;
-  bool _startupCheckDone = false;
-
-  @override
-  void initState() {
-    super.initState();
-    WidgetsBinding.instance.addPostFrameCallback((_) => _checkBluetoothOnStartup());
-  }
-
-  Future<void> _checkBluetoothOnStartup() async {
-    if (!mounted || _startupCheckDone) return;
-    _startupCheckDone = true;
-
-    final state = await _ble.getAdapterState();
-    if (!mounted || state == BluetoothAdapterState.on) return;
-
-    if (state == BluetoothAdapterState.unavailable) {
-      await _showBluetoothUnavailable();
-      return;
-    }
-
-    // Uygulama Bluetooth'u kendi kararıyla açmaz. Önce kullanıcıdan açık onay
-    // alınır; ancak onaydan sonra Android'in sistem Bluetooth açma isteği başlar.
-    await _requestBluetoothConsent();
-  }
-
   Future<bool> _requestBluetoothConsent() async {
     if (_bluetoothActionRunning) return false;
 
@@ -157,10 +132,10 @@ class _HomeScreenState extends State<HomeScreen> {
                 const SizedBox(height: 28),
                 const Text('VISIONSEN', style: TextStyle(fontSize: 30, fontWeight: FontWeight.w900, letterSpacing: 2.3)),
                 const SizedBox(height: 5),
-                const Text('DEVICE SETUP', style: TextStyle(color: AppTheme.green, fontWeight: FontWeight.w800, letterSpacing: 1.5)),
+                const Text('CİHAZ YAPILANDIRMA', style: TextStyle(color: AppTheme.green, fontWeight: FontWeight.w800, letterSpacing: 1.2)),
                 const SizedBox(height: 32),
                 const Text(
-                  'ESP32 cihazınızı Bluetooth ile bulun,\nayarlarını güvenli şekilde güncelleyin.',
+                  'ESP32 cihazınızı Bluetooth ile bulun,\nayarlarını mevcut BLE akışıyla yapılandırın.',
                   textAlign: TextAlign.center,
                   style: TextStyle(color: AppTheme.muted, height: 1.5, fontSize: 14),
                 ),
@@ -171,9 +146,9 @@ class _HomeScreenState extends State<HomeScreen> {
                   onPressed: _bluetoothActionRunning ? null : _startSetup,
                 ),
                 const Spacer(flex: 3),
-                const Text('BLE DEVICE CONFIGURATION', style: TextStyle(color: AppTheme.muted, fontSize: 10, letterSpacing: 1.3)),
+                const Text('LOGIN KORUMALI BLE DEVICE CONFIGURATION', style: TextStyle(color: AppTheme.muted, fontSize: 10, letterSpacing: 1.1)),
                 const SizedBox(height: 6),
-                const Text('v1.2.9', style: TextStyle(color: AppTheme.muted, fontSize: 11)),
+                const Text('Mobil v1.3.0', style: TextStyle(color: AppTheme.muted, fontSize: 11)),
                 const SizedBox(height: 18),
               ],
             ),

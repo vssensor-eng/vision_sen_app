@@ -55,7 +55,9 @@ class _DeviceInfoScreenState extends State<DeviceInfoScreen> {
     required VoidCallback toggle,
   }) {
     final value = controller.text.trim();
-    final validation = value.isEmpty ? null : DeviceConfig.validateCompanyKey(value, label: label);
+    final validation = value.isEmpty
+        ? null
+        : DeviceConfig.validateCompanyKey(value, label: label);
     final ok = value.isNotEmpty && validation == null;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -80,10 +82,44 @@ class _DeviceInfoScreenState extends State<DeviceInfoScreen> {
                   : (validation ?? 'Firma anahtarı geçersiz.'),
           style: TextStyle(
             fontSize: 11,
-            color: value.isEmpty ? AppTheme.muted : (ok ? AppTheme.green : Colors.redAccent),
+            color: value.isEmpty
+                ? AppTheme.muted
+                : (ok ? AppTheme.green : Colors.redAccent),
           ),
         ),
       ],
+    );
+  }
+
+  void _continue(BuildContext context) {
+    final deviceName = name.text.trim();
+    final nameError = DeviceConfig.validateDeviceName(deviceName);
+    if (nameError != null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(nameError)),
+      );
+      return;
+    }
+
+    widget.config.deviceName = deviceName;
+    widget.config.serial = serial.text.trim();
+    if (_alreadyConfigured) {
+      widget.config.currentCompanyKey = currentKey.text.trim();
+      widget.config.changeCompanyKey = changeCompanyKey;
+      widget.config.companyKey = changeCompanyKey
+          ? key.text.trim()
+          : widget.config.currentCompanyKey;
+    } else {
+      widget.config.currentCompanyKey = '';
+      widget.config.changeCompanyKey = false;
+      widget.config.companyKey = key.text.trim();
+    }
+
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => ServerScreen(config: widget.config, ble: widget.ble),
+      ),
     );
   }
 
@@ -97,7 +133,14 @@ class _DeviceInfoScreenState extends State<DeviceInfoScreen> {
             child: Column(
               children: [
                 StepHeader(step: 5, title: 'CİHAZ BİLGİLERİ'),
-                TextField(controller: name, decoration: const InputDecoration(labelText: 'Cihaz Adı')),
+                TextField(
+                  controller: name,
+                  decoration: const InputDecoration(
+                    labelText: 'Cihaz Adı',
+                    helperText: 'Firmware 1.3.9+ ile BLE adı cihazda kalıcı saklanır',
+                    helperStyle: TextStyle(fontSize: 10, color: AppTheme.muted),
+                  ),
+                ),
                 const SizedBox(height: 14),
                 TextField(
                   controller: serial,
@@ -108,7 +151,6 @@ class _DeviceInfoScreenState extends State<DeviceInfoScreen> {
                   ),
                 ),
                 const SizedBox(height: 14),
-
                 if (_alreadyConfigured) ...[
                   Container(
                     padding: const EdgeInsets.all(12),
@@ -116,17 +158,18 @@ class _DeviceInfoScreenState extends State<DeviceInfoScreen> {
                       borderRadius: BorderRadius.circular(12),
                       border: Border.all(color: Colors.amber.withOpacity(.5)),
                     ),
-                    child: const Row(children: [
-                      Icon(Icons.info_outline, color: Colors.amber, size: 20),
-                      SizedBox(width: 8),
-                      Expanded(
-                        child: Text(
-                          'Bu cihaz daha önce kurulmuş. Herhangi bir ayarı (WiFi dahil) değiştirebilmek '
-                          'için cihazda kayıtlı mevcut firma anahtarıyla yetkilendirme gerekir.',
-                          style: TextStyle(color: Colors.amber, fontSize: 11.5),
+                    child: const Row(
+                      children: [
+                        Icon(Icons.info_outline, color: Colors.amber, size: 20),
+                        SizedBox(width: 8),
+                        Expanded(
+                          child: Text(
+                            'Bu cihaz daha önce kurulmuş. Herhangi bir ayarı (WiFi dahil) değiştirebilmek için cihazda kayıtlı mevcut firma anahtarıyla yetkilendirme gerekir.',
+                            style: TextStyle(color: Colors.amber, fontSize: 11.5),
+                          ),
                         ),
-                      ),
-                    ]),
+                      ],
+                    ),
                   ),
                   const SizedBox(height: 14),
                   _keyField(
@@ -179,30 +222,8 @@ class _DeviceInfoScreenState extends State<DeviceInfoScreen> {
                     ),
                   ),
                 ],
-
                 const SizedBox(height: 40),
-                PrimaryButton(
-                  text: 'İLERİ',
-                  onPressed: () {
-                    widget.config.deviceName = name.text.trim();
-                    widget.config.serial = serial.text.trim();
-                    if (_alreadyConfigured) {
-                      widget.config.currentCompanyKey = currentKey.text.trim();
-                      widget.config.changeCompanyKey = changeCompanyKey;
-                      widget.config.companyKey = changeCompanyKey
-                          ? key.text.trim()
-                          : widget.config.currentCompanyKey;
-                    } else {
-                      widget.config.currentCompanyKey = '';
-                      widget.config.changeCompanyKey = false;
-                      widget.config.companyKey = key.text.trim();
-                    }
-                    Navigator.push(
-                      c,
-                      MaterialPageRoute(builder: (_) => ServerScreen(config: widget.config, ble: widget.ble)),
-                    );
-                  },
-                ),
+                PrimaryButton(text: 'İLERİ', onPressed: () => _continue(c)),
               ],
             ),
           ),
