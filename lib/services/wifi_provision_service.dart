@@ -193,7 +193,17 @@ class WifiProvisionService {
       switch (e.code) {
         case 'NEARBY_PERMISSION_DENIED':
           lastError =
-              'Android Yakındaki Wi-Fi cihazları izni verilmedi. Bu izin konum izni değildir.';
+              'Android Yakındaki Wi-Fi cihazları izni sistemde etkin görünmüyor. Bu izin konum izni değildir.';
+          break;
+        case 'ANDROID_LEGACY_LOCATION_REQUIRED':
+          lastError =
+              'Bu Android sürümü otomatik Wi-Fi bağlantısını konum iznine bağlıyor. VisionSen konum izni istemediği için Android 13 veya daha yeni sürüm gerekir.';
+          break;
+        case 'WIFI_SECURITY':
+          lastError = _platformMessage(
+            e,
+            'Android Wi-Fi bağlantı isteğini güvenlik nedeniyle reddetti.',
+          );
           break;
         case 'ANDROID_VERSION':
           lastError =
