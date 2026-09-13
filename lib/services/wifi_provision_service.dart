@@ -131,7 +131,7 @@ class WifiProvisionService {
         default:
           lastError = _platformMessage(
             e,
-            'VisionSen cihaz seçim ekranı açılamadı.',
+            'VisionSen cihaz seçim ekranı açılamadı. Uygulama konum izni istemez.',
           );
       }
       return const [];
