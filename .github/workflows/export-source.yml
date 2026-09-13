@@ -1,0 +1,22 @@
+name: Export Source
+
+on:
+  pull_request:
+    branches: [ main, master ]
+  workflow_dispatch: {}
+
+jobs:
+  export-source:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v5
+
+      - name: Create source archive
+        run: git archive --format=zip --output=VisionSen-Mobile-v1.5.1+17-source.zip HEAD
+
+      - name: Upload source artifact
+        uses: actions/upload-artifact@v5
+        with:
+          name: visionsen-source-v1.5.1+17
+          path: VisionSen-Mobile-v1.5.1+17-source.zip
