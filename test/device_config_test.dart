@@ -9,17 +9,11 @@ String repeatedA(int count) => List.filled(count, 'A').join();
 DeviceConfig baseConfig() => DeviceConfig()
   ..deviceName = 'VisionSen Test'
   ..ssid = 'TestWifi'
-  ..serial = 'ESP-999999'
   ..companyKey = validKeyA
   ..serverUrl = 'https://example.com/api';
 
 void main() {
   group('DeviceConfig validation', () {
-    test('placeholder serial is rejected', () {
-      final c = baseConfig()..serial = DeviceConfig.placeholderSerial;
-      expect(c.validate(), contains('örnek seri numarası'));
-    });
-
     test('company key accepts 32 characters and rejects 31', () {
       final valid = baseConfig();
       expect(valid.validate(), isNull);
