@@ -11,6 +11,7 @@ path = sys.argv[1]
 text = open(path, encoding='utf-8').read()
 for permission in [
     'android.permission.INTERNET',
+    'android.permission.ACCESS_NETWORK_STATE',
     'android.permission.ACCESS_WIFI_STATE',
     'android.permission.CHANGE_WIFI_STATE',
     'android.permission.NEARBY_WIFI_DEVICES',
@@ -22,10 +23,11 @@ for permission in [
         text,
     )
 perms = '''    <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
     <uses-permission android:name="android.permission.CHANGE_WIFI_STATE" />
     <uses-permission android:name="android.permission.NEARBY_WIFI_DEVICES" android:usesPermissionFlags="neverForLocation" />
-    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" android:maxSdkVersion="32" />
+    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
 '''
 text = re.sub(r'(<manifest[^>]*>)', r'\1\n' + perms, text, count=1)
 open(path, 'w', encoding='utf-8').write(text)
@@ -39,18 +41,22 @@ import android.Manifest
 import android.content.Context
 import android.content.pm.PackageManager
 import android.net.ConnectivityManager
+import android.net.LinkProperties
 import android.net.Network
 import android.net.NetworkCapabilities
 import android.net.NetworkRequest
 import android.net.wifi.WifiInfo
+import android.net.wifi.WifiManager
 import android.net.wifi.WifiNetworkSpecifier
 import android.os.Build
-import android.os.PatternMatcher
+import android.os.Handler
+import android.os.Looper
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodCall
 import io.flutter.plugin.common.MethodChannel
 import java.net.HttpURLConnection
+import java.net.Inet4Address
 import java.net.URL
 import java.nio.charset.StandardCharsets
 import java.util.concurrent.Executors
@@ -58,19 +64,30 @@ import java.util.concurrent.atomic.AtomicBoolean
 
 class MainActivity : FlutterActivity() {
     private val channelName = "com.visionsen/setup"
-    private val permissionRequestCode = 4173
+    private val connectPermissionRequestCode = 4173
+    private val scanPermissionRequestCode = 4174
     private val ioExecutor = Executors.newSingleThreadExecutor()
+    private val mainHandler = Handler(Looper.getMainLooper())
 
     private lateinit var connectivityManager: ConnectivityManager
+    private lateinit var wifiManager: WifiManager
     private var methodChannel: MethodChannel? = null
     private var provisioningNetwork: Network? = null
+    private var provisioningSsid: String? = null
     private var activeCallback: ConnectivityManager.NetworkCallback? = null
     private var pendingConnect: PendingConnect? = null
+    private var pendingScan: PendingScan? = null
+    private var dhcpTimeoutRunnable: Runnable? = null
 
     private data class PendingConnect(
-        val ssidPrefix: String,
+        val ssid: String,
         val password: String,
         val timeoutMs: Int,
+        val result: MethodChannel.Result,
+    )
+
+    private data class PendingScan(
+        val ssidPrefix: String,
         val result: MethodChannel.Result,
     )
 
@@ -78,12 +95,16 @@ class MainActivity : FlutterActivity() {
         super.configureFlutterEngine(flutterEngine)
         connectivityManager =
             getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
+        wifiManager = applicationContext
+            .getSystemService(Context.WIFI_SERVICE) as WifiManager
+
         methodChannel = MethodChannel(
             flutterEngine.dartExecutor.binaryMessenger,
             channelName,
         ).also { channel ->
             channel.setMethodCallHandler { call, result ->
                 when (call.method) {
+                    "scanProvisioningWifi" -> scanProvisioningWifi(call, result)
                     "connectProvisioningWifi" -> connectProvisioningWifi(call, result)
                     "disconnectProvisioningWifi" -> {
                         disconnectProvisioningInternal(notifyFlutter = false)
@@ -96,6 +117,94 @@ class MainActivity : FlutterActivity() {
         }
     }
 
+    private fun scanProvisioningWifi(call: MethodCall, result: MethodChannel.Result) {
+        val prefix = call.argument<String>("ssidPrefix")?.trim().orEmpty()
+        if (prefix.isEmpty()) {
+            result.error("WIFI_ARGUMENT", "Kurulum Wi-Fi öneki geçersiz.", null)
+            return
+        }
+        if (!wifiManager.isWifiEnabled) {
+            result.success(mapOf("wifiEnabled" to false, "devices" to emptyList<Any>()))
+            return
+        }
+
+        val missing = missingScanPermissions()
+        if (missing.isNotEmpty()) {
+            pendingScan = PendingScan(prefix, result)
+            requestPermissions(missing.toTypedArray(), scanPermissionRequestCode)
+            return
+        }
+        startProvisioningScan(prefix, result)
+    }
+
+    private fun missingScanPermissions(): List<String> {
+        val required = mutableListOf<String>()
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M &&
+            checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION) !=
+            PackageManager.PERMISSION_GRANTED) {
+            required += Manifest.permission.ACCESS_FINE_LOCATION
+        }
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+            checkSelfPermission(Manifest.permission.NEARBY_WIFI_DEVICES) !=
+            PackageManager.PERMISSION_GRANTED) {
+            required += Manifest.permission.NEARBY_WIFI_DEVICES
+        }
+        return required
+    }
+
+    private fun startProvisioningScan(
+        ssidPrefix: String,
+        result: MethodChannel.Result,
+    ) {
+        if (!wifiManager.isWifiEnabled) {
+            result.success(mapOf("wifiEnabled" to false, "devices" to emptyList<Any>()))
+            return
+        }
+        try {
+            // startScan may be throttled on recent Android versions. We still
+            // read the cached scan list after a short delay, which is normally
+            // refreshed by the system Wi-Fi subsystem.
+            wifiManager.startScan()
+            mainHandler.postDelayed({
+                try {
+                    result.success(
+                        mapOf(
+                            "wifiEnabled" to wifiManager.isWifiEnabled,
+                            "devices" to readVisionSenScanResults(ssidPrefix),
+                        ),
+                    )
+                } catch (e: SecurityException) {
+                    result.error("PERMISSION_DENIED", e.message, null)
+                } catch (e: Exception) {
+                    result.error("WIFI_SCAN", e.message, null)
+                }
+            }, 1800L)
+        } catch (e: SecurityException) {
+            result.error("PERMISSION_DENIED", e.message, null)
+        } catch (e: Exception) {
+            result.error("WIFI_SCAN", e.message, null)
+        }
+    }
+
+    @Suppress("DEPRECATION")
+    private fun readVisionSenScanResults(ssidPrefix: String): List<Map<String, Any>> {
+        return wifiManager.scanResults
+            .asSequence()
+            .mapNotNull { scan ->
+                val ssid = scan.SSID?.trim().orEmpty()
+                if (!ssid.startsWith(ssidPrefix)) return@mapNotNull null
+                mapOf(
+                    "ssid" to ssid,
+                    "rssi" to scan.level,
+                )
+            }
+            .groupBy { it["ssid"] as String }
+            .map { (_, entries) ->
+                entries.maxByOrNull { (it["rssi"] as Int) } ?: entries.first()
+            }
+            .sortedByDescending { it["rssi"] as Int }
+    }
+
     private fun connectProvisioningWifi(call: MethodCall, result: MethodChannel.Result) {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) {
             result.error(
@@ -105,42 +214,54 @@ class MainActivity : FlutterActivity() {
             )
             return
         }
-
-        provisioningNetwork?.let { network ->
-            result.success(mapOf("connected" to true, "ssid" to selectedSsid(network)))
+        if (!wifiManager.isWifiEnabled) {
+            result.error("WIFI_DISABLED", "Telefon Wi-Fi kapalı.", null)
             return
         }
 
+        val ssid = call.argument<String>("ssid")?.trim().orEmpty()
+        val password = call.argument<String>("password").orEmpty()
+        val timeoutMs = (call.argument<Number>("timeoutMs")?.toInt() ?: 35000)
+            .coerceIn(15000, 60000)
+        if (ssid.isEmpty() || password.length < 8) {
+            result.error("WIFI_ARGUMENT", "Kurulum Wi-Fi bilgileri geçersiz.", null)
+            return
+        }
+
+        if (provisioningNetwork != null && provisioningSsid == ssid) {
+            result.success(
+                mapOf(
+                    "connected" to true,
+                    "ssid" to ssid,
+                    "localIp" to localIpv4(provisioningNetwork),
+                ),
+            )
+            return
+        }
         if (pendingConnect != null || activeCallback != null) {
             result.error("WIFI_BUSY", "Wi-Fi bağlantı isteği devam ediyor.", null)
             return
         }
 
-        val prefix = call.argument<String>("ssidPrefix")?.trim().orEmpty()
-        val password = call.argument<String>("password").orEmpty()
-        val timeoutMs = (call.argument<Number>("timeoutMs")?.toInt() ?: 30000)
-            .coerceIn(10000, 60000)
-        if (prefix.isEmpty() || password.length < 8) {
-            result.error("WIFI_ARGUMENT", "Kurulum Wi-Fi bilgileri geçersiz.", null)
+        val permission = requiredConnectPermission()
+        if (permission != null &&
+            checkSelfPermission(permission) != PackageManager.PERMISSION_GRANTED) {
+            pendingConnect = PendingConnect(ssid, password, timeoutMs, result)
+            requestPermissions(arrayOf(permission), connectPermissionRequestCode)
             return
         }
 
-        val permission = requiredWifiPermission()
-        if (checkSelfPermission(permission) != PackageManager.PERMISSION_GRANTED) {
-            pendingConnect = PendingConnect(prefix, password, timeoutMs, result)
-            requestPermissions(arrayOf(permission), permissionRequestCode)
-            return
-        }
-
-        startProvisioningRequest(prefix, password, timeoutMs, result)
+        startProvisioningRequest(ssid, password, timeoutMs, result)
     }
 
-    private fun requiredWifiPermission(): String =
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+    private fun requiredConnectPermission(): String? {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.M) return null
+        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             Manifest.permission.NEARBY_WIFI_DEVICES
         } else {
             Manifest.permission.ACCESS_FINE_LOCATION
         }
+    }
 
     override fun onRequestPermissionsResult(
         requestCode: Int,
@@ -148,30 +269,46 @@ class MainActivity : FlutterActivity() {
         grantResults: IntArray,
     ) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults)
-        if (requestCode != permissionRequestCode) return
-
-        val pending = pendingConnect ?: return
-        pendingConnect = null
         val granted = grantResults.isNotEmpty() &&
             grantResults.all { it == PackageManager.PERMISSION_GRANTED }
-        if (!granted) {
-            pending.result.error(
-                "PERMISSION_DENIED",
-                "Yakındaki Wi-Fi cihazlarına erişim izni verilmedi.",
-                null,
-            )
+
+        if (requestCode == scanPermissionRequestCode) {
+            val pending = pendingScan ?: return
+            pendingScan = null
+            if (!granted) {
+                pending.result.error(
+                    "PERMISSION_DENIED",
+                    "Wi-Fi cihaz tarama izni verilmedi.",
+                    null,
+                )
+                return
+            }
+            startProvisioningScan(pending.ssidPrefix, pending.result)
             return
         }
-        startProvisioningRequest(
-            pending.ssidPrefix,
-            pending.password,
-            pending.timeoutMs,
-            pending.result,
-        )
+
+        if (requestCode == connectPermissionRequestCode) {
+            val pending = pendingConnect ?: return
+            pendingConnect = null
+            if (!granted) {
+                pending.result.error(
+                    "PERMISSION_DENIED",
+                    "Yakındaki Wi-Fi cihazlarına erişim izni verilmedi.",
+                    null,
+                )
+                return
+            }
+            startProvisioningRequest(
+                pending.ssid,
+                pending.password,
+                pending.timeoutMs,
+                pending.result,
+            )
+        }
     }
 
     private fun startProvisioningRequest(
-        ssidPrefix: String,
+        ssid: String,
         password: String,
         timeoutMs: Int,
         result: MethodChannel.Result,
@@ -181,8 +318,10 @@ class MainActivity : FlutterActivity() {
             return
         }
 
+        disconnectProvisioningInternal(notifyFlutter = false)
+
         val specifier = WifiNetworkSpecifier.Builder()
-            .setSsidPattern(PatternMatcher(ssidPrefix, PatternMatcher.PATTERN_PREFIX))
+            .setSsid(ssid)
             .setWpa2Passphrase(password)
             .build()
         val request = NetworkRequest.Builder()
@@ -195,21 +334,37 @@ class MainActivity : FlutterActivity() {
         val callback = object : ConnectivityManager.NetworkCallback() {
             override fun onAvailable(network: Network) {
                 provisioningNetwork = network
-                if (delivered.compareAndSet(false, true)) {
-                    runOnUiThread {
-                        result.success(
-                            mapOf(
-                                "connected" to true,
-                                "ssid" to selectedSsid(network),
-                            ),
+                provisioningSsid = ssid
+                deliverIfDhcpReady(network, ssid, result, delivered)
+
+                val timeout = Runnable {
+                    if (provisioningNetwork == network &&
+                        delivered.compareAndSet(false, true)) {
+                        disconnectProvisioningInternal(notifyFlutter = false)
+                        result.error(
+                            "DHCP_TIMEOUT",
+                            "Cihaz ağına bağlanıldı ancak 192.168.4.x yerel IP alınamadı.",
+                            null,
                         )
                     }
                 }
+                dhcpTimeoutRunnable = timeout
+                mainHandler.postDelayed(timeout, 9000L)
+            }
+
+            override fun onLinkPropertiesChanged(
+                network: Network,
+                linkProperties: LinkProperties,
+            ) {
+                if (provisioningNetwork != network) return
+                deliverIfDhcpReady(network, ssid, result, delivered, linkProperties)
             }
 
             override fun onUnavailable() {
                 if (activeCallback === this) activeCallback = null
                 provisioningNetwork = null
+                provisioningSsid = null
+                cancelDhcpTimeout()
                 if (delivered.compareAndSet(false, true)) {
                     runOnUiThread {
                         result.error(
@@ -224,6 +379,8 @@ class MainActivity : FlutterActivity() {
             override fun onLost(network: Network) {
                 if (provisioningNetwork != network) return
                 provisioningNetwork = null
+                provisioningSsid = null
+                cancelDhcpTimeout()
                 if (activeCallback === this) {
                     try {
                         connectivityManager.unregisterNetworkCallback(this)
@@ -241,15 +398,58 @@ class MainActivity : FlutterActivity() {
         } catch (e: SecurityException) {
             activeCallback = null
             provisioningNetwork = null
+            provisioningSsid = null
             if (delivered.compareAndSet(false, true)) {
                 result.error("PERMISSION_DENIED", e.message, null)
             }
         } catch (e: Exception) {
             activeCallback = null
             provisioningNetwork = null
+            provisioningSsid = null
             if (delivered.compareAndSet(false, true)) {
                 result.error("WIFI_UNAVAILABLE", e.message, null)
             }
+        }
+    }
+
+    private fun deliverIfDhcpReady(
+        network: Network,
+        ssid: String,
+        result: MethodChannel.Result,
+        delivered: AtomicBoolean,
+        suppliedLinkProperties: LinkProperties? = null,
+    ) {
+        val localIp = localIpv4(network, suppliedLinkProperties) ?: return
+        if (!localIp.startsWith("192.168.4.")) return
+        if (!delivered.compareAndSet(false, true)) return
+        cancelDhcpTimeout()
+        runOnUiThread {
+            result.success(
+                mapOf(
+                    "connected" to true,
+                    "ssid" to ssid,
+                    "localIp" to localIp,
+                ),
+            )
+        }
+    }
+
+    private fun localIpv4(
+        network: Network?,
+        suppliedLinkProperties: LinkProperties? = null,
+    ): String? {
+        if (network == null) return null
+        return try {
+            val linkProperties = suppliedLinkProperties
+                ?: connectivityManager.getLinkProperties(network)
+            linkProperties?.linkAddresses
+                ?.asSequence()
+                ?.map { it.address }
+                ?.filterIsInstance<Inet4Address>()
+                ?.firstOrNull { !it.isLoopbackAddress }
+                ?.hostAddress
+        } catch (_: Exception) {
+            null
         }
     }
 
@@ -261,18 +461,19 @@ class MainActivity : FlutterActivity() {
             wifiInfo?.ssid
                 ?.trim('"')
                 ?.takeIf { it.isNotBlank() && it != UNKNOWN_SSID }
+                ?: provisioningSsid
                 ?: "VISIONSEN-OIM3-XXXX"
         } catch (_: Exception) {
-            "VISIONSEN-OIM3-XXXX"
+            provisioningSsid ?: "VISIONSEN-OIM3-XXXX"
         }
     }
 
     private fun localHttpRequest(call: MethodCall, result: MethodChannel.Result) {
         val network = provisioningNetwork
-        if (network == null) {
+        if (network == null || localIpv4(network)?.startsWith("192.168.4.") != true) {
             result.error(
                 "NO_PROVISIONING_NETWORK",
-                "VisionSen cihaz Wi-Fi bağlantısı aktif değil.",
+                "VisionSen cihaz Wi-Fi bağlantısı aktif değil veya DHCP hazır değil.",
                 null,
             )
             return
@@ -281,7 +482,7 @@ class MainActivity : FlutterActivity() {
         val method = call.argument<String>("method")?.uppercase() ?: "GET"
         val path = call.argument<String>("path") ?: "/"
         val body = call.argument<String>("body") ?: ""
-        val timeoutMs = (call.argument<Number>("timeoutMs")?.toInt() ?: 5000)
+        val timeoutMs = (call.argument<Number>("timeoutMs")?.toInt() ?: 6500)
             .coerceIn(1000, 15000)
         if (method !in setOf("GET", "POST") ||
             path !in setOf("/api/info", "/api/config")) {
@@ -290,64 +491,85 @@ class MainActivity : FlutterActivity() {
         }
 
         ioExecutor.execute {
-            var connection: HttpURLConnection? = null
-            try {
-                val conn = network.openConnection(
-                    URL("http://192.168.4.1$path"),
-                ) as HttpURLConnection
-                connection = conn
-                conn.instanceFollowRedirects = false
-                conn.connectTimeout = timeoutMs
-                conn.readTimeout = timeoutMs
-                conn.requestMethod = method
-                conn.useCaches = false
-                conn.setRequestProperty("Cache-Control", "no-store")
-                conn.setRequestProperty("Connection", "close")
+            val attempts = if (method == "GET") 4 else 1
+            var lastError: Exception? = null
+            for (attempt in 1..attempts) {
+                var connection: HttpURLConnection? = null
+                try {
+                    val conn = network.openConnection(
+                        URL("http://192.168.4.1$path"),
+                    ) as HttpURLConnection
+                    connection = conn
+                    conn.instanceFollowRedirects = false
+                    conn.connectTimeout = timeoutMs
+                    conn.readTimeout = timeoutMs
+                    conn.requestMethod = method
+                    conn.useCaches = false
+                    conn.setRequestProperty("Cache-Control", "no-store")
+                    conn.setRequestProperty("Connection", "close")
 
-                if (method == "POST") {
-                    val bytes = body.toByteArray(StandardCharsets.UTF_8)
-                    conn.doOutput = true
-                    conn.setRequestProperty(
-                        "Content-Type",
-                        "application/json; charset=utf-8",
-                    )
-                    conn.setFixedLengthStreamingMode(bytes.size)
-                    conn.outputStream.use { it.write(bytes) }
-                }
+                    if (method == "POST") {
+                        val bytes = body.toByteArray(StandardCharsets.UTF_8)
+                        conn.doOutput = true
+                        conn.setRequestProperty(
+                            "Content-Type",
+                            "application/json; charset=utf-8",
+                        )
+                        conn.setFixedLengthStreamingMode(bytes.size)
+                        conn.outputStream.use { it.write(bytes) }
+                    }
 
-                val statusCode = conn.responseCode
-                val stream = if (statusCode in 200..399) {
-                    conn.inputStream
-                } else {
-                    conn.errorStream
+                    val statusCode = conn.responseCode
+                    val stream = if (statusCode in 200..399) {
+                        conn.inputStream
+                    } else {
+                        conn.errorStream
+                    }
+                    val responseBody = stream
+                        ?.bufferedReader(StandardCharsets.UTF_8)
+                        ?.use { it.readText() }
+                        .orEmpty()
+                    runOnUiThread {
+                        result.success(
+                            mapOf(
+                                "statusCode" to statusCode,
+                                "body" to responseBody,
+                            ),
+                        )
+                    }
+                    return@execute
+                } catch (e: Exception) {
+                    lastError = e
+                    if (attempt < attempts) {
+                        try {
+                            Thread.sleep(350L * attempt)
+                        } catch (_: InterruptedException) {
+                            Thread.currentThread().interrupt()
+                            break
+                        }
+                    }
+                } finally {
+                    connection?.disconnect()
                 }
-                val responseBody = stream
-                    ?.bufferedReader(StandardCharsets.UTF_8)
-                    ?.use { it.readText() }
-                    .orEmpty()
-                runOnUiThread {
-                    result.success(
-                        mapOf(
-                            "statusCode" to statusCode,
-                            "body" to responseBody,
-                        ),
-                    )
-                }
-            } catch (e: Exception) {
-                runOnUiThread {
-                    result.error(
-                        "LOCAL_HTTP",
-                        e.message ?: "Yerel cihaz isteği başarısız.",
-                        null,
-                    )
-                }
-            } finally {
-                connection?.disconnect()
+            }
+
+            runOnUiThread {
+                result.error(
+                    "LOCAL_HTTP",
+                    lastError?.message ?: "Yerel cihaz isteği başarısız.",
+                    null,
+                )
             }
         }
     }
 
+    private fun cancelDhcpTimeout() {
+        dhcpTimeoutRunnable?.let { mainHandler.removeCallbacks(it) }
+        dhcpTimeoutRunnable = null
+    }
+
     private fun disconnectProvisioningInternal(notifyFlutter: Boolean) {
+        cancelDhcpTimeout()
         activeCallback?.let { callback ->
             try {
                 connectivityManager.unregisterNetworkCallback(callback)
@@ -357,6 +579,7 @@ class MainActivity : FlutterActivity() {
         activeCallback = null
         val hadNetwork = provisioningNetwork != null
         provisioningNetwork = null
+        provisioningSsid = null
         pendingConnect = null
         if (notifyFlutter && hadNetwork) notifyProvisioningDisconnected()
     }
@@ -367,8 +590,23 @@ class MainActivity : FlutterActivity() {
         }
     }
 
+    override fun onStop() {
+        // Once a provisioning network is actually active, leaving the app must
+        // release it. Pending Android connection/permission dialogs are not
+        // cancelled here because provisioningNetwork is still null at that time.
+        if (::connectivityManager.isInitialized &&
+            provisioningNetwork != null &&
+            !isChangingConfigurations) {
+            disconnectProvisioningInternal(notifyFlutter = true)
+        }
+        super.onStop()
+    }
+
     override fun onDestroy() {
-        disconnectProvisioningInternal(notifyFlutter = false)
+        if (::connectivityManager.isInitialized) {
+            disconnectProvisioningInternal(notifyFlutter = false)
+        }
+        pendingScan = null
         ioExecutor.shutdownNow()
         methodChannel?.setMethodCallHandler(null)
         methodChannel = null
@@ -381,4 +619,4 @@ class MainActivity : FlutterActivity() {
 }
 KOTLIN
 
-echo "Android local-only provisioning hazır: WifiNetworkSpecifier + Network.openConnection; process bind yok."
+echo "Android robust provisioning hazır: discovery + exact SSID + DHCP verify + local HTTP retry + lifecycle cleanup."
