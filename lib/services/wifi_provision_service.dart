@@ -23,7 +23,7 @@ class ProvisioningWifiDevice {
 class WifiProvisionService {
   static const String deviceBaseUrl = 'http://192.168.4.1';
   static const String apNamePrefix = 'VISIONSEN-OIM3-';
-  static const String apNamePattern = 'VISIONSEN-OIM3-XXXX';
+  static const String apNamePattern = 'VISIONSEN-OIM3-ESP-XXXXXX';
   static const String apPassword = 'VisionSenOIM3';
   static const MethodChannel _platform = MethodChannel('com.visionsen/setup');
 
@@ -356,7 +356,6 @@ class WifiProvisionService {
       'ssid': config.ssid,
       'password': config.password,
       'server_url': config.serverUrl,
-      'serial': config.serial,
       'company_key': config.effectiveCompanyKey,
       'auth_key': config.deviceAlreadyConfigured ? config.currentCompanyKey : '',
       'device_name': config.deviceName.trim(),
