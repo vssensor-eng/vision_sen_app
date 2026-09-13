@@ -74,21 +74,25 @@ class WifiProvisionService {
       final result = await _platform.invokeMapMethod<String, dynamic>(
         'scanProvisioningWifi',
         const {'ssidPrefix': apNamePrefix},
-      ).timeout(const Duration(seconds: 15));
+      ).timeout(const Duration(seconds: 45));
 
       if (result == null) {
-        lastError = 'Wi-Fi taramasından yanıt alınamadı.';
+        lastError = 'Wi-Fi cihaz seçiminden yanıt alınamadı.';
         return const [];
       }
       if (result['wifiEnabled'] != true) {
         lastError =
-            'Telefon Wi-Fi kapalı. Wi-Fi’yi açın ve cihazları tekrar tarayın.';
+            'Telefon Wi-Fi kapalı. Wi-Fi’yi açın ve cihazları tekrar arayın.';
+        return const [];
+      }
+      if (result['cancelled'] == true) {
+        lastError = 'Cihaz seçimi iptal edildi.';
         return const [];
       }
 
       final raw = result['devices'];
       if (raw is! List) {
-        lastError = 'VisionSen cihaz tarama sonucu geçersiz.';
+        lastError = 'VisionSen cihaz seçim sonucu geçersiz.';
         return const [];
       }
 
@@ -105,31 +109,34 @@ class WifiProvisionService {
       devices.sort((a, b) => b.rssi.compareTo(a.rssi));
       if (devices.isEmpty) {
         lastError =
-            'Yakında açık VisionSen kurulum cihazı bulunamadı. Cihazı kapatıp açın ve tekrar tarayın.';
+            'VisionSen kurulum cihazı seçilmedi. Cihazı kapatıp açın ve tekrar deneyin.';
       }
       return devices;
     } on TimeoutException {
-      lastError = 'VisionSen cihaz taraması zaman aşımına uğradı.';
+      lastError = 'Android cihaz seçim ekranı zaman aşımına uğradı.';
       return const [];
     } on PlatformException catch (e) {
       switch (e.code) {
-        case 'PERMISSION_DENIED':
+        case 'COMPANION_UNAVAILABLE':
           lastError =
-              'Yakındaki Wi-Fi cihazlarını taramak için gerekli Android izni verilmedi.';
+              'Bu telefonda konum izni gerektirmeyen Android cihaz seçim servisi kullanılamıyor.';
           break;
         case 'WIFI_DISABLED':
           lastError =
               'Telefon Wi-Fi kapalı. Wi-Fi’yi açın ve tekrar deneyin.';
           break;
+        case 'WIFI_BUSY':
+          lastError = 'Cihaz seçim ekranı zaten açık.';
+          break;
         default:
           lastError = _platformMessage(
             e,
-            'VisionSen cihazları taranamadı.',
+            'VisionSen cihaz seçim ekranı açılamadı.',
           );
       }
       return const [];
     } catch (_) {
-      lastError = 'VisionSen cihazları taranamadı.';
+      lastError = 'VisionSen cihaz seçim ekranı açılamadı.';
       return const [];
     }
   }
@@ -184,9 +191,9 @@ class WifiProvisionService {
     } on PlatformException catch (e) {
       _setConnection(false);
       switch (e.code) {
-        case 'PERMISSION_DENIED':
+        case 'NEARBY_PERMISSION_DENIED':
           lastError =
-              'Yakındaki Wi-Fi cihazlarına erişim izni verilmedi. İzin verip tekrar deneyin.';
+              'Android Yakındaki Wi-Fi cihazları izni verilmedi. Bu izin konum izni değildir.';
           break;
         case 'ANDROID_VERSION':
           lastError =
@@ -198,7 +205,7 @@ class WifiProvisionService {
           break;
         case 'WIFI_UNAVAILABLE':
           lastError =
-              'Seçilen VisionSen cihazına bağlanılamadı. Cihazı kapatıp açın ve tekrar tarayın.';
+              'Seçilen VisionSen cihazına bağlanılamadı. Cihazı kapatıp açın ve tekrar seçin.';
           break;
         case 'WIFI_BUSY':
           lastError = 'Başka bir cihaz bağlantı isteği halen devam ediyor.';
