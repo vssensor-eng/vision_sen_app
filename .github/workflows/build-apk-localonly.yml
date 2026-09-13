@@ -48,6 +48,8 @@ jobs:
           grep -q 'WIFI_SECURITY' "$MAIN"
           grep -q 'ANDROID_LEGACY_LOCATION_REQUIRED' "$MAIN"
           grep -q 'await _connectDevice(devices.first)' lib/screens/wifi_provision_screen.dart
+          grep -q 'ANDROID_LEGACY_LOCATION_REQUIRED' lib/services/wifi_provision_service.dart
+          grep -q 'WIFI_SECURITY' lib/services/wifi_provision_service.dart
           grep -q 'version: 1.6.4+22' pubspec.yaml
 
       - name: Install dependencies
