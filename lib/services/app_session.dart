@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 import 'package:flutter/foundation.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import '../config_app.dart';
@@ -5,10 +7,15 @@ import 'mobile_api_service.dart';
 
 class AppSession extends ChangeNotifier {
   static const _tokenKey = 'visionsen_mobile_token';
+  static const _bundleCacheKey = 'visionsen_mobile_bundle_cache';
+  static const _lastLoginKey = 'visionsen_mobile_last_login';
+
   final FlutterSecureStorage _storage;
   late MobileApiService api;
   bool initializing = true, busy = false, authenticated = false;
+  bool _persistentSession = false;
   String? error;
+  String lastLogin = '';
   Map<String, dynamic> bundle = const {};
 
   AppSession({FlutterSecureStorage? storage})
@@ -54,26 +61,77 @@ class AppSession extends ChangeNotifier {
           .toList()
       : const [];
 
+  Future<void> _loadBundleCache() async {
+    final raw = await _storage.read(key: _bundleCacheKey);
+    if (raw == null || raw.isEmpty) return;
+    try {
+      final decoded = jsonDecode(raw);
+      if (decoded is Map) {
+        bundle = Map<String, dynamic>.from(decoded);
+      }
+    } catch (_) {
+      await _storage.delete(key: _bundleCacheKey);
+    }
+  }
+
+  Future<void> _persistBundle() async {
+    if (!_persistentSession || bundle.isEmpty) return;
+    try {
+      await _storage.write(key: _bundleCacheKey, value: jsonEncode(bundle));
+    } catch (_) {
+      // Cache is an optimization. A storage failure must not invalidate login.
+    }
+  }
+
+  Future<void> _clearStoredSession() async {
+    await _storage.delete(key: _tokenKey);
+    await _storage.delete(key: _bundleCacheKey);
+    _persistentSession = false;
+  }
+
   Future<void> restore() async {
     initializing = true;
+    error = null;
     notifyListeners();
+
+    lastLogin = (await _storage.read(key: _lastLoginKey) ?? '').trim();
     final saved = await _storage.read(key: _tokenKey);
     if (saved == null || saved.isEmpty) {
       initializing = false;
       authenticated = false;
+      bundle = const {};
       notifyListeners();
       return;
     }
+
     api.token = saved;
+    _persistentSession = true;
+    await _loadBundleCache();
+
     try {
       bundle = await api.bundle();
       authenticated = true;
       error = null;
+      await _persistBundle();
+    } on MobileApiException catch (e) {
+      if (e.statusCode == 401) {
+        await _clearStoredSession();
+        api.token = null;
+        authenticated = false;
+        bundle = const {};
+        error = 'Oturum süresi doldu. Lütfen tekrar giriş yapın.';
+      } else {
+        // 5xx/temporary HTTP errors do not prove that the token is invalid.
+        authenticated = true;
+        error =
+            'Sunucuya geçici olarak ulaşılamıyor. Oturumunuz korunuyor; son veriler gösteriliyor.';
+      }
     } catch (_) {
-      await _storage.delete(key: _tokenKey);
-      api.token = null;
-      authenticated = false;
-      bundle = const {};
+      // DNS, timeout, no-internet or a temporary local-only Wi-Fi route must
+      // never destroy a valid stored login token.
+      authenticated = true;
+      error =
+          'İnternet bağlantısı geçici olarak kullanılamıyor. Oturumunuz korunuyor; bağlantı gelince yenileyin.';
     } finally {
       initializing = false;
       notifyListeners();
@@ -89,8 +147,9 @@ class AppSession extends ChangeNotifier {
     error = null;
     notifyListeners();
     try {
+      final normalizedLogin = login.trim();
       final response = await api.login(
-        login: login,
+        login: normalizedLogin,
         password: password,
         remember: remember,
       );
@@ -99,10 +158,21 @@ class AppSession extends ChangeNotifier {
       if (t is! String || t.isEmpty || b is! Map) {
         throw const MobileApiException('Giriş yanıtı eksik.');
       }
+
       api.token = t;
-      await _storage.write(key: _tokenKey, value: t);
       bundle = Map<String, dynamic>.from(b);
       authenticated = true;
+      lastLogin = normalizedLogin;
+      _persistentSession = remember;
+
+      await _storage.write(key: _lastLoginKey, value: normalizedLogin);
+      if (remember) {
+        await _storage.write(key: _tokenKey, value: t);
+        await _persistBundle();
+      } else {
+        await _storage.delete(key: _tokenKey);
+        await _storage.delete(key: _bundleCacheKey);
+      }
       return true;
     } on MobileApiException catch (e) {
       error = e.message;
@@ -125,11 +195,12 @@ class AppSession extends ChangeNotifier {
     notifyListeners();
     try {
       bundle = await api.bundle();
+      await _persistBundle();
     } on MobileApiException catch (e) {
       error = e.message;
       if (e.statusCode == 401) await logout(localOnly: true);
     } catch (_) {
-      error = 'Veriler yenilenemedi.';
+      error = 'Veriler yenilenemedi. Oturumunuz açık kalmaya devam ediyor.';
     } finally {
       busy = false;
       notifyListeners();
@@ -151,9 +222,11 @@ class AppSession extends ChangeNotifier {
     try {
       await action();
       bundle = await api.bundle();
+      await _persistBundle();
       return true;
     } on MobileApiException catch (e) {
       error = e.message;
+      if (e.statusCode == 401) await logout(localOnly: true);
       return false;
     } catch (_) {
       error = fallback;
@@ -280,7 +353,7 @@ class AppSession extends ChangeNotifier {
 
   Future<void> logout({bool localOnly = false}) async {
     if (!localOnly) await api.logout();
-    await _storage.delete(key: _tokenKey);
+    await _clearStoredSession();
     api.token = null;
     authenticated = false;
     bundle = const {};
