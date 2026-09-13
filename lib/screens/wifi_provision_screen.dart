@@ -21,7 +21,6 @@ class _WifiProvisionScreenState extends State<WifiProvisionScreen> {
   final _ssid = TextEditingController();
   final _password = TextEditingController();
   final _deviceName = TextEditingController();
-  final _serial = TextEditingController();
   final _serverUrl = TextEditingController(
     text: 'https://www.vsias.com/wp-json/oim/v1/ingest',
   );
@@ -65,7 +64,6 @@ class _WifiProvisionScreenState extends State<WifiProvisionScreen> {
     _ssid.dispose();
     _password.dispose();
     _deviceName.dispose();
-    _serial.dispose();
     _serverUrl.dispose();
     _companyKey.dispose();
     _currentCompanyKey.dispose();
@@ -182,11 +180,24 @@ class _WifiProvisionScreenState extends State<WifiProvisionScreen> {
     final configured =
         info['configured'] == true || '${info['configured']}' == 'true';
     final serial = info['serial']?.toString().trim() ?? '';
+    final serialLocked = info['serial_locked'] == true ||
+        '${info['serial_locked']}' == 'true';
+    final identitySource = info['identity_source']?.toString().trim() ?? '';
     final name = info['device_name']?.toString().trim() ?? '';
     final interval = info['send_interval_minutes'] as int? ?? 1;
 
-    if (serial.isNotEmpty && !DeviceConfig.isPlaceholderSerial(serial)) {
-      _serial.text = serial;
+    if (serial.isEmpty || !serialLocked || identitySource != 'factory_data') {
+      await _provision.disconnect();
+      if (!mounted) return;
+      setState(() {
+        _busy = false;
+        _connectingSsid = null;
+      });
+      _setMessage(
+        'Cihaz üretici seri kimliğini doğrulamadı. factory_data seri numarası gerekli.',
+        error: true,
+      );
+      return;
     }
     if (name.isNotEmpty) _deviceName.text = name;
     if (DeviceConfig.isSupportedSendInterval(interval)) {
@@ -229,7 +240,6 @@ class _WifiProvisionScreenState extends State<WifiProvisionScreen> {
       ..ssid = _ssid.text.trim()
       ..password = _password.text
       ..deviceName = _deviceName.text.trim()
-      ..serial = _serial.text.trim()
       ..serverUrl = _serverUrl.text.trim()
       ..sendIntervalMinutes = _sendInterval
       ..currentCompanyKey = _currentCompanyKey.text.trim()
@@ -289,8 +299,8 @@ class _WifiProvisionScreenState extends State<WifiProvisionScreen> {
         return 'Wi-Fi ağ adı geçersiz.';
       case 'ERROR:WIFI_PASSWORD':
         return 'Wi-Fi şifresi geçersiz.';
-      case 'ERROR:SERIAL':
-        return 'Seri numarası geçersiz.';
+      case 'ERROR:SERIAL_READ_ONLY':
+        return 'Seri numarası üretici kimliğidir ve mobil uygulamadan değiştirilemez.';
       case 'ERROR:KEY_LENGTH':
         return 'Firma anahtarı geçersiz.';
       case 'ERROR:DEVICE_NAME':
@@ -419,7 +429,7 @@ class _WifiProvisionScreenState extends State<WifiProvisionScreen> {
               ),
               const SizedBox(height: 6),
               const Text(
-                'OIM3 v2.1.3 • Konum izinsiz cihaz seçimi ve bağlantı',
+                'OIM3 v2.1.4 • Üretici seri kimliği + konum izinsiz bağlantı',
                 textAlign: TextAlign.center,
                 style: TextStyle(color: AppTheme.green, fontSize: 11.5),
               ),
@@ -523,7 +533,19 @@ class _WifiProvisionScreenState extends State<WifiProvisionScreen> {
                         'Telefon yerel IP: ${_provision.connectedLocalIp ?? '-'}',
                       ),
                       Text('Firmware: ${info['fw'] ?? '-'}'),
-                      Text('Seri no: ${info['serial'] ?? '-'}'),
+                      Row(
+                        children: [
+                          const Icon(Icons.lock_outline, size: 15, color: AppTheme.green),
+                          const SizedBox(width: 6),
+                          Expanded(
+                            child: Text(
+                              'Üretici seri no: ${info['serial'] ?? '-'}',
+                              style: const TextStyle(fontWeight: FontWeight.w800),
+                            ),
+                          ),
+                        ],
+                      ),
+                      Text('HW-ID: ${info['hw_id'] ?? '-'}'),
                       Text('MAC: ${info['mac'] ?? '-'}'),
                     ],
                   ),
@@ -565,16 +587,6 @@ class _WifiProvisionScreenState extends State<WifiProvisionScreen> {
                           'Cihaz adı',
                           Icons.label_outline,
                           hint: 'Depo Sensör 1',
-                        ),
-                      ),
-                      const SizedBox(height: 12),
-                      TextField(
-                        controller: _serial,
-                        textCapitalization: TextCapitalization.characters,
-                        decoration: _decoration(
-                          'Seri numarası',
-                          Icons.qr_code_2,
-                          hint: 'ESP-001',
                         ),
                       ),
                       const SizedBox(height: 12),
@@ -692,7 +704,7 @@ class _WifiProvisionScreenState extends State<WifiProvisionScreen> {
               ],
               const SizedBox(height: 20),
               const Text(
-                'Mobil v1.6.4+22 • Konum izinsiz Wi-Fi + sağlamlaştırılmış izin akışı',
+                'Mobil v1.6.6+24 • Üretici seri kimliği salt-okunur',
                 textAlign: TextAlign.center,
                 style: TextStyle(color: AppTheme.muted, fontSize: 10.5),
               ),
