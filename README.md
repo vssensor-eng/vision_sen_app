@@ -1,31 +1,39 @@
-# VisionSen Mobil — v1.4.2
+# VisionSen Mobil — v1.6.0
 
-VisionSen Mobil, **Ortam İzleme 2.5.50 no-cron + Mobil API** ile çalışır. BLE cihaz yapılandırma akışı yalnız login sonrasında **Yapılandır > BAŞLAYALIM** ile açılır.
+VisionSen Mobil, **Ortam İzleme 2.5.77 + Mobil API** ile çalışır. ESP32 OIM3 cihaz yapılandırması yalnız login sonrasında **Yapılandır** sekmesinden ve cihazın geçici yerel Wi-Fi ağı üzerinden yapılır.
 
-## v1.4.2 düzeltmeleri
-- v1.4.1'de eklenen yerel sesli Android alarm bildirimi, `POST_NOTIFICATIONS` izni ve 20 saniyelik alarm notification watcher kaldırıldı. Alarmlar uygulamanın ekranlarında görüntülenmeye devam eder.
-- Konum/harita özelliği yoktur; `ACCESS_FINE_LOCATION` ve `ACCESS_COARSE_LOCATION` kullanılmaz. BLE yalnız `BLUETOOTH_SCAN` + `BLUETOOTH_CONNECT` ister.
-- İlk BLE bağlantısında Android eşleştirmesi tamamlanmadan şifreli GATT okumaya geçilmez. Uygulama `bondState` üzerinden `bonded` durumunu ayrıca bekler ve ilk encrypted INFO okuması gerektiğinde kısa aralıklarla yeniden dener.
-- Tarama listesinde Android'in önbellekte tutabildiği `platformName` yerine güncel advertisement adı önceliklidir.
-- Mobil provisioning paketi artık `device_name` alanını da gönderir.
-- Kalıcı özel BLE cihaz adı için **VS-ESP firmware 1.3.9+** gerekir. Firmware adı NVS'te saklar ve sonraki gerçek güç açılışındaki BLE reklamında kullanır. Eski firmware sürümleri özel adı kalıcı saklamaz.
-- Firma anahtarı istemci doğrulaması firmware ile aynı 32-128 karakter politikasına hizalandı.
+## v1.6.0 — Wi-Fi provisioning
+- ESP32 yapılandırma taşıması BLE/NimBLE yerine **Wi-Fi SoftAP Provisioning Protocol v2** kullanır.
+- Cihaz kurulum sırasında `VISIONSEN-OIM3-XXXX` isimli WPA2 ağı açar; mobil uygulama cihazı `http://192.168.4.1` adresindeki yerel API üzerinden yapılandırır.
+- Mobil uygulamada Bluetooth tarama, bonding, GATT, MTU/chunk yönetimi ve Bluetooth/konum izinları kaldırılmıştır.
+- Android tarafında yalnız internet ve Wi-Fi durum erişimi kullanılır; Wi-Fi ağı seçimi sistem Wi-Fi ayar ekranından yapılır.
+- Kurulum alanları: hedef SSID/şifre, cihaz adı, seri numarası, HTTPS sunucu URL, firma anahtarı ve 1/5/15 dakika gönderim aralığı.
+- Daha önce yapılandırılmış cihazlarda mevcut firma anahtarı yeniden doğrulanır; firma anahtarı isteğe bağlı değiştirilebilir.
+- Mobil sürüm: **1.6.0+18**. Uyumlu OIM3 firmware: **v2.1.0**.
 
 ## Alt navigasyon
 - Ana — sistem sağlığı, bina/oda/cihaz/sensör/alarm sayıları, son alarmlar, çevrimdışı cihazlar ve hızlı erişim
-- Detay — bina/oda/dolap seçimi, canlı sensör kartları, ikonlar, 24 saat trend, alarmlar ve cihazlar
-- Binalar — bina/oda/dolap ekleme, düzenleme ve silme
+- Detay — bina/kat/oda/dolap seçimi, canlı sensör kartları, grafikler, alarmlar ve cihazlar
+- Binalar — bina/kat/oda/dolap ekleme, düzenleme ve silme
 - Cihazlar — cihaz ekleme, düzenleme, silme ve sensör yönetimi
-- Yapılandır — BLE provisioning akışı
+- Yapılandır — OIM3 Wi-Fi SoftAP provisioning
 - Profil — hesap/firma bilgileri ve çıkış
 
+## OIM3 Wi-Fi kurulum akışı
+1. ESP32 cihazı kapatıp açın.
+2. Telefonda Wi-Fi ayarlarını açın ve `VISIONSEN-OIM3-XXXX` ağına bağlanın.
+3. Kurulum ağı parolası: `VisionSenOIM3`.
+4. Android internet erişimi olmadığını söylerse bu ağa bağlı kalmayı seçin.
+5. Uygulamaya dönüp **Bağlantıyı kontrol et** seçeneğini kullanın.
+6. Yapılandırma alanlarını doldurup cihaza kaydedin. Cihaz yeniden başlar ve normal Wi-Fi/telemetri çalışma moduna geçer.
+
 ## Yönetim
-Firma yöneticisi mobil uygulamadan bina, oda, dolap, cihaz ve sensör oluşturabilir/düzenleyebilir/silebilir. Sensörler veri modelinde **cihaza bağlıdır**; cihaz oda veya dolaba atanır. İzleme personeli salt okunur erişim kullanır.
+Firma yöneticisi mobil uygulamadan bina, kat, oda, dolap, cihaz ve sensör oluşturabilir/düzenleyebilir/silebilir. Sensörler veri modelinde **cihaza bağlıdır**; cihaz oda veya dolaba atanır. İzleme personeli salt okunur erişim kullanır.
 
 ## Grafik
-Sensöre dokunulduğunda 1 saat, 6 saat, 24 saat, 7 gün, 30 gün ve 90 gün aralıkları açılır. Grafik X ekseninde zamanı, Y ekseninde sensör birimini gösterir. Güncel, minimum ve maksimum ayrı gösterilir; ortalama kartı yoktur.
+Sensöre dokunulduğunda 1 saat, 6 saat, 24 saat, 7 gün, 30 gün ve 90 gün aralıkları açılır. Grafik X ekseninde zamanı, Y ekseninde sensör birimini gösterir. Güncel, minimum ve maksimum ayrı gösterilir.
 
 ## Web API
 `https://www.vsias.com/wp-json/oim/v1/mobile/*`
 
-Mobil CRUD uçları yalnız HTTPS + geçerli Bearer token + manager rolünde çalışır. Web tarafındaki bağlı kayıt/silme güvenlik kuralları aynen korunur. WP-Cron veya harici cron bağımlılığı yoktur.
+Mobil CRUD uçları yalnız HTTPS + geçerli Bearer token + manager rolünde çalışır. OIM3 provisioning API ise yalnız cihazın geçici yerel SoftAP ağı içindeki `192.168.4.1` adresinde HTTP kullanır; bulut/sunucu URL doğrulaması HTTPS zorunludur.
