@@ -1,19 +1,21 @@
-# VisionSen Mobil — v1.6.3
+# VisionSen Mobil — v1.6.4
 
 VisionSen Mobil, **Ortam İzleme 2.5.81 + Mobil API** ile çalışır. ESP32 OIM3 cihaz yapılandırması yalnız login sonrasında **Yapılandır** sekmesinden ve cihazın geçici yerel Wi-Fi ağı üzerinden yapılır.
 
-## v1.6.3 — Konum izinsiz Wi-Fi provisioning
+## v1.6.4 — Konum izinsiz ve sağlamlaştırılmış Wi-Fi provisioning
 - ESP32 yapılandırma taşıması BLE/NimBLE yerine **Wi-Fi SoftAP Provisioning Protocol v2** kullanır.
 - Cihaz kurulum sırasında `VISIONSEN-OIM3-XXXX` isimli WPA2 ağı açar; mobil uygulama cihazı `http://192.168.4.1` adresindeki yerel API üzerinden yapılandırır.
 - `ACCESS_FINE_LOCATION` ve `ACCESS_COARSE_LOCATION` kullanılmaz ve manifestte tanımlı değildir.
 - `WifiManager.startScan()` / `getScanResults()` kullanılmaz.
-- VisionSen cihaz seçimi Android `CompanionDeviceManager` + `WifiDeviceFilter` üzerinden yapılır. Android sistem ekranı yalnız `VISIONSEN-OIM3-*` eşleşen cihazları listeler.
-- Android 13+ için bağlantı yönetiminde `NEARBY_WIFI_DEVICES` kullanılabilir; manifestte `neverForLocation` olarak tanımlıdır. Bu izin fiziksel konum için kullanılmaz.
-- Seçilen cihaz `WifiNetworkSpecifier` ile local-only olarak bağlanır. Bağlantı başarılı sayılmadan önce telefonun `192.168.4.x` DHCP adresi aldığı doğrulanır.
-- Uygulama process’i ESP ağına global olarak bind edilmez. Yalnız `192.168.4.1` yerel provisioning istekleri Android `Network.openConnection()` üzerinden cihaz ağına yönlendirilir; VSİAS cloud/login trafiği normal internet bağlantısında kalır.
-- Kurulum alanları: hedef SSID/şifre, cihaz adı, seri numarası, HTTPS sunucu URL, firma anahtarı ve 1/5/15 dakika gönderim aralığı.
-- Daha önce yapılandırılmış cihazlarda mevcut firma anahtarı yeniden doğrulanır; firma anahtarı isteğe bağlı değiştirilebilir.
-- Mobil sürüm: **1.6.3+21**. Uyumlu OIM3 firmware: **v2.1.3 / Provisioning Protocol v2**.
+- VisionSen cihaz seçimi Android `CompanionDeviceManager` + `WifiDeviceFilter` üzerinden yapılır.
+- Companion association provisioning tamamlanana veya bağlantı iptal edilene kadar korunur; cihaz seçilir seçilmez silinmez.
+- Android 13+ için `NEARBY_WIFI_DEVICES` manifestte `neverForLocation` ile tanımlıdır. Bu fiziksel konum izni değildir.
+- İzin diyaloğu sonrasında yalnız callback sonucu değil, gerçek paket permission state yeniden okunur.
+- Seçilen cihaz `WifiNetworkSpecifier` ile local-only olarak bağlanır; bağlantı ancak telefon `192.168.4.x` DHCP adresi aldıktan sonra başarılı sayılır.
+- `/api/info` ve `/api/config` yalnız cihazın seçilen Android `Network` nesnesi üzerinden `192.168.4.1` adresine gider; cloud/login trafiği normal internet bağlantısında kalır.
+- Uygulama arka plana geçtiğinde, sekmeden çıkıldığında, logout yapıldığında veya Activity kapandığında provisioning request ve companion association temizlenir.
+- Android 12L ve daha eski sürümlerde bazı Wi-Fi bağlantı API'leri işletim sistemi tarafından konum iznine bağlı olabilir. VisionSen konum izni istemediği için bu durumda uygulama yanlış “yakındaki cihaz izni yok” mesajı vermez; işletim sistemi kısıtını açıkça bildirir.
+- Mobil sürüm: **1.6.4+22**. Uyumlu OIM3 firmware: **v2.1.3 / Provisioning Protocol v2**.
 
 ## Oturum
 - Başarılı giriş tokenı `FlutterSecureStorage` içinde korunur.
@@ -25,11 +27,11 @@ VisionSen Mobil, **Ortam İzleme 2.5.81 + Mobil API** ile çalışır. ESP32 OIM
 1. ESP32 cihazı kapatıp açın.
 2. Uygulamadaki **Cihazları Bul** düğmesine dokunun.
 3. Android cihaz seçim ekranında `VISIONSEN-OIM3-*` cihazınızı seçin. Uygulama konum izni istemez.
-4. Seçilen cihaz satırına dokunarak bağlantıyı başlatın.
-5. Telefon `192.168.4.x` adresi aldıktan sonra uygulama `/api/info` isteğini seçilen local-only network üzerinden gönderir ve cihaz kimliğini doğrular.
-6. Yapılandırma alanlarını doldurup cihaza kaydedin. `/api/config` isteği de yalnız cihaz network’ü üzerinden gider.
-7. `SAVED` alındığında ESP bağlantısı otomatik bırakılır; cihaz yeniden başlar ve normal Wi-Fi/telemetri moduna geçer.
-8. Provisioning aktifken uygulama arka plana geçerse, sekmeden çıkılırsa, logout yapılırsa veya Activity kapanırsa cihaz bağlantısı bırakılır.
+4. Android 13+ gerekiyorsa yalnız **Yakındaki Wi-Fi cihazları** iznini gösterir; izin verildikten sonra uygulama gerçek permission state'i tekrar doğrular.
+5. Seçim sonrası cihaz bağlantısı otomatik başlar.
+6. Telefon `192.168.4.x` adresi aldıktan sonra uygulama `/api/info` isteğini local-only network üzerinden gönderir.
+7. Yapılandırma alanlarını doldurup cihaza kaydedin. `/api/config` isteği de yalnız cihaz network’ü üzerinden gider.
+8. `SAVED` alındığında ESP bağlantısı otomatik bırakılır; cihaz yeniden başlar ve normal Wi-Fi/telemetri moduna geçer.
 
 ## Alt navigasyon
 - Ana — sistem sağlığı, bina/oda/cihaz/sensör/alarm sayıları, son alarmlar, çevrimdışı cihazlar ve hızlı erişim
@@ -51,4 +53,12 @@ Sensöre dokunulduğunda 1 saat, 6 saat, 24 saat, 7 gün, 30 gün ve 90 gün ara
 Mobil CRUD uçları yalnız HTTPS + geçerli Bearer token + manager rolünde çalışır. OIM3 provisioning API ise yalnız cihazın geçici yerel SoftAP ağı içindeki `192.168.4.1` adresinde HTTP kullanır; bulut/sunucu URL doğrulaması HTTPS zorunludur.
 
 ## Android build
-Kaynak pakette Android platformunu üretmek ve local-only provisioning köprüsünü kurmak için `bash tool/bootstrap_android_localonly.sh` çalıştırın. CI ayrıca manifestte konum izni olmadığını ve native kodda `startScan`/`scanResults` kullanılmadığını doğrular.
+Kaynak pakette Android platformunu üretmek ve v1.6.4 provisioning köprüsünü kurmak için:
+
+```bash
+bash tool/bootstrap_android_v164.sh
+flutter pub get
+flutter analyze
+flutter test
+flutter build apk --release
+```
