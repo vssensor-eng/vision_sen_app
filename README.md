@@ -14,7 +14,7 @@ VisionSen Mobil, **Ortam İzleme 2.5.81 + Mobil API** ile çalışır. ESP32 OIM
 - Seçilen cihaz `WifiNetworkSpecifier` ile local-only olarak bağlanır; bağlantı ancak telefon `192.168.4.x` DHCP adresi aldıktan sonra başarılı sayılır.
 - `/api/info` ve `/api/config` yalnız cihazın seçilen Android `Network` nesnesi üzerinden `192.168.4.1` adresine gider; cloud/login trafiği normal internet bağlantısında kalır.
 - Uygulama arka plana geçtiğinde, sekmeden çıkıldığında, logout yapıldığında veya Activity kapandığında provisioning request ve companion association temizlenir.
-- Android 12L ve daha eski sürümlerde bazı Wi-Fi bağlantı API'leri işletim sistemi tarafından konum iznine bağlı olabilir. VisionSen konum izni istemediği için bu durumda uygulama yanlış “yakındaki cihaz izni yok” mesajı vermez; işletim sistemi kısıtını açıkça bildirir.
+- Android 12L ve daha eski sürümlerde Wi-Fi bağlantı yönetimi Android tarafından `ACCESS_FINE_LOCATION` iznine bağlanabilir. VisionSen konum izni istemediği için otomatik provisioning bu sürümlerde işletim sistemi tarafından engellenirse açık bir uyumluluk mesajı gösterilir; yanlış “Yakındaki Wi-Fi izni verilmedi” mesajı gösterilmez.
 - Mobil sürüm: **1.6.4+22**. Uyumlu OIM3 firmware: **v2.1.3 / Provisioning Protocol v2**.
 
 ## Oturum
