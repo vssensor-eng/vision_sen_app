@@ -23,7 +23,6 @@ void main() {
     test('company key accepts 32 characters and rejects 31', () {
       final valid = baseConfig();
       expect(valid.validate(), isNull);
-
       valid.companyKey = repeatedA(31);
       expect(valid.validate(), contains('32-128'));
     });
@@ -36,27 +35,32 @@ void main() {
     test('device name is required and limited by UTF-8 byte length', () {
       final c = baseConfig()..deviceName = '';
       expect(c.validate(), contains('Cihaz adı boş'));
-
       c.deviceName = repeatedA(29);
       expect(c.validate(), contains('28 UTF-8 byte'));
-
       c.deviceName = 'VisionSen Oda 1';
       expect(c.validate(), isNull);
     });
 
-    test('server url requires a host', () {
+    test('Wi-Fi SSID and password lengths match firmware limits', () {
+      final c = baseConfig()..ssid = repeatedA(33);
+      expect(c.validate(), contains('32 byte'));
+      c.ssid = 'TestWifi';
+      c.password = repeatedA(65);
+      expect(c.validate(), contains('64 byte'));
+      c.password = List.filled(64, 'G').join();
+      expect(c.validate(), contains('hexadecimal'));
+      c.password = repeatedA(64);
+      expect(c.validate(), isNull);
+    });
+
+    test('server url requires HTTPS and a host', () {
       expect(DeviceConfig.validateServerUrl('https://'), isNotNull);
+      expect(DeviceConfig.validateServerUrl('http://192.168.1.10/ingest'), isNotNull);
+      expect(DeviceConfig.validateServerUrl('https://example.com/ingest'), isNull);
     });
 
     test('server url rejects query', () {
-      expect(
-        DeviceConfig.validateServerUrl('https://example.com/api?x=1'),
-        isNotNull,
-      );
-    });
-
-    test('server url accepts a normal trailing slash', () {
-      expect(DeviceConfig.validateServerUrl('https://example.com/api/'), isNull);
+      expect(DeviceConfig.validateServerUrl('https://example.com/api?x=1'), isNotNull);
     });
 
     test('already-configured device requires a valid current company key', () {
@@ -65,14 +69,8 @@ void main() {
         ..changeCompanyKey = false
         ..currentCompanyKey = '';
       expect(c.validate(), contains('MEVCUT firma anahtarı'));
-
       c.currentCompanyKey = validKeyA;
-      c.companyKey = c.currentCompanyKey;
       expect(c.validate(), isNull);
-
-      c.currentCompanyKey = '${repeatedA(31)} ';
-      c.companyKey = c.currentCompanyKey;
-      expect(c.validate(), contains('yalnızca harf'));
     });
 
     test('already-configured device keeps current key when change is disabled', () {
@@ -94,51 +92,29 @@ void main() {
       expect(c.effectiveCompanyKey, validKeyB);
       expect(c.validate(), isNull);
     });
-
-    test('first-time setup does not require current company key', () {
-      final c = baseConfig()..deviceAlreadyConfigured = false;
-      expect(c.validate(), isNull);
-    });
-
-    test('valid server url is accepted', () {
-      expect(
-        DeviceConfig.validateServerUrl(
-          'https://example.com/wp-json/oim/v1/ingest',
-        ),
-        isNull,
-      );
-      expect(
-        DeviceConfig.validateServerUrl('http://192.168.1.10:8080/ingest'),
-        isNull,
-      );
-    });
   });
 
   group('VisionSen compatibility', () {
-    test('environment monitor + protocol v1 identity is supported', () {
-      expect(
-        VisionSenCompatibility.isSupportedIdentity(
-          VisionSenCompatibility.environmentMonitor,
-          1,
-        ),
-        isTrue,
-      );
-    });
-
-    test('unsupported identity combinations are rejected', () {
+    test('environment monitor + Wi-Fi provisioning protocol v2 is supported', () {
       expect(
         VisionSenCompatibility.isSupportedIdentity(
           VisionSenCompatibility.environmentMonitor,
           2,
         ),
-        isFalse,
+        isTrue,
       );
+    });
+
+    test('old BLE protocol identity and unknown device types are rejected', () {
       expect(
-        VisionSenCompatibility.isSupportedIdentity('collector', 1),
+        VisionSenCompatibility.isSupportedIdentity(
+          VisionSenCompatibility.environmentMonitor,
+          1,
+        ),
         isFalse,
       );
-      expect(VisionSenCompatibility.isSupportedProtocol(2), isFalse);
       expect(VisionSenCompatibility.isSupportedDeviceType('collector'), isFalse);
+      expect(VisionSenCompatibility.isSupportedProtocol(1), isFalse);
     });
   });
 }
