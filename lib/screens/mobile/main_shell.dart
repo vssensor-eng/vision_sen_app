@@ -43,19 +43,28 @@ class _MainShellState extends State<MainShell> {
   Future<void> _openIndex(int value) async {
     if (!mounted || value == index) return;
 
-    if (index == 4 && value != 4 && _provision.isConnected) {
+    if (index == 4 && value != 4) {
+      final wasConnected = _provision.isConnected;
       await _provision.disconnect();
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Cihaz Wi-Fi bağlantısı sonlandırıldı.'),
-          duration: Duration(seconds: 2),
-        ),
-      );
+      if (wasConnected) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Cihaz Wi-Fi bağlantısı sonlandırıldı.'),
+            duration: Duration(seconds: 2),
+          ),
+        );
+      }
     }
 
     if (!mounted) return;
     setState(() => index = value);
+  }
+
+  Future<void> _logout() async {
+    await _provision.disconnect();
+    if (!mounted) return;
+    await widget.session.logout();
   }
 
   Future<void> _handleSystemBack(bool didPop, Object? result) async {
@@ -84,7 +93,7 @@ class _MainShellState extends State<MainShell> {
       BuildingsScreen(session: widget.session),
       DevicesScreen(session: widget.session),
       WifiProvisionScreen(provision: _provision),
-      ProfileScreen(session: widget.session),
+      ProfileScreen(session: widget.session, onLogout: _logout),
     ];
 
     return PopScope(
