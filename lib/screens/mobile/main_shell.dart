@@ -72,8 +72,8 @@ class _MainShellState extends State<MainShell> {
             label: 'Cihazlar',
           ),
           NavigationDestination(
-            icon: Icon(Icons.bluetooth_searching),
-            selectedIcon: Icon(Icons.bluetooth_connected),
+            icon: Icon(Icons.wifi_tethering_outlined),
+            selectedIcon: Icon(Icons.wifi_tethering),
             label: 'Yapılandır',
           ),
           NavigationDestination(
