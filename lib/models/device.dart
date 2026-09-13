@@ -30,12 +30,10 @@ class VisionSenCompatibility {
 }
 
 class DeviceConfig {
-  static const placeholderSerial = 'ESP-000125';
   static const int maxDeviceNameBytes = 28;
   static const List<int> supportedSendIntervals = [1, 5, 15];
 
   String deviceName = '';
-  String serial = '';
   String ssid = '';
   String password = '';
   String companyKey = '';
@@ -87,9 +85,6 @@ class DeviceConfig {
     return null;
   }
 
-  static bool isPlaceholderSerial(String value) =>
-      value.trim().toUpperCase() == placeholderSerial;
-
   static String? validateServerUrl(String value) {
     final raw = value.trim();
     if (raw.isEmpty) return 'Sunucu adresi boş olamaz.';
@@ -136,16 +131,6 @@ class DeviceConfig {
     if (passwordBytes > 64) return 'WiFi şifresi en fazla 64 byte olabilir.';
     if (passwordBytes == 64 && !RegExp(r'^[0-9A-Fa-f]{64}$').hasMatch(password)) {
       return '64 karakterlik WiFi şifresi yalnız hexadecimal PSK olabilir.';
-    }
-    if (serial.trim().isEmpty) return 'Seri numarası boş olamaz.';
-    if (isPlaceholderSerial(serial)) {
-      return '$placeholderSerial örnek seri numarası kullanılamaz; gerçek cihaz seri numarasını girin.';
-    }
-    if (serial.length > 64) {
-      return 'Seri numarası en fazla 64 karakter olabilir.';
-    }
-    if (!RegExp(r'^[A-Za-z0-9_-]+$').hasMatch(serial)) {
-      return 'Seri numarası yalnızca harf, rakam, tire ve alt çizgi içerebilir.';
     }
     if (deviceAlreadyConfigured) {
       if (currentCompanyKey.trim().isEmpty) {
