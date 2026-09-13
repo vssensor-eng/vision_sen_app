@@ -86,7 +86,7 @@ class _WifiProvisionScreenState extends State<WifiProvisionScreen> {
       _busy = true;
       _saved = false;
       _foundDevices = const [];
-      _message = 'Yakındaki VisionSen cihazları taranıyor...';
+      _message = 'Yakındaki VisionSen cihazları aranıyor...';
       _messageIsError = false;
     });
 
@@ -102,6 +102,11 @@ class _WifiProvisionScreenState extends State<WifiProvisionScreen> {
         _provision.lastError ?? 'Yakında VisionSen kurulum cihazı bulunamadı.',
         error: true,
       );
+      return;
+    }
+
+    if (devices.length == 1) {
+      await _connectDevice(devices.first);
       return;
     }
 
@@ -414,7 +419,7 @@ class _WifiProvisionScreenState extends State<WifiProvisionScreen> {
               ),
               const SizedBox(height: 6),
               const Text(
-                'OIM3 v2.1.3 • Uygulama içi cihaz tarama ve bağlantı',
+                'OIM3 v2.1.3 • Konum izinsiz cihaz seçimi ve bağlantı',
                 textAlign: TextAlign.center,
                 style: TextStyle(color: AppTheme.green, fontSize: 11.5),
               ),
@@ -433,16 +438,16 @@ class _WifiProvisionScreenState extends State<WifiProvisionScreen> {
                     Text('2. CİHAZLARI BUL düğmesine dokunun.'),
                     SizedBox(height: 6),
                     Text(
-                      '3. Uygulamada listelenen VISIONSEN-OIM3 cihazını seçin.',
+                      '3. Android cihaz seçim ekranında VISIONSEN-OIM3 cihazını seçin. Konum izni kullanılmaz.',
                     ),
                     SizedBox(height: 6),
                     Text(
-                      '4. Android yalnız seçtiğiniz cihaz ağına bağlanmak için sistem onayı gösterebilir. Wi-Fi ayarlarına çıkılmaz.',
+                      '4. Android 13+ cihazlarda Yakındaki Wi-Fi cihazları izni istenebilir. Bu izin konum bilgisi için kullanılmaz.',
                       style: TextStyle(color: AppTheme.muted),
                     ),
                     SizedBox(height: 6),
                     Text(
-                      'Uygulama arka plana geçtiğinde, kapatıldığında, sekmeden çıkıldığında veya çıkış yapıldığında cihaz bağlantısı bırakılır.',
+                      'Kurulum bitince veya uygulamadan ayrılınca cihaz bağlantısı otomatik kapatılır.',
                       style: TextStyle(color: AppTheme.muted),
                     ),
                   ],
@@ -687,7 +692,7 @@ class _WifiProvisionScreenState extends State<WifiProvisionScreen> {
               ],
               const SizedBox(height: 20),
               const Text(
-                'Mobil v1.6.2+20 • Wi-Fi discovery + DHCP doğrulamalı Provisioning Protocol v2',
+                'Mobil v1.6.4+22 • Konum izinsiz Wi-Fi + sağlamlaştırılmış izin akışı',
                 textAlign: TextAlign.center,
                 style: TextStyle(color: AppTheme.muted, fontSize: 10.5),
               ),
