@@ -329,7 +329,7 @@ class _AddDeviceScreenState extends State<AddDeviceScreen> {
             ),
             const SizedBox(height: 10),
             const Text(
-              'Fiziksel ESP Wi-Fi/BLE ayarları ayrı tutulur. Bunun için login sonrasında Yapılandır sekmesini kullanın.',
+              'Fiziksel ESP Wi-Fi ayarları ayrı tutulur. Bunun için login sonrasında Yapılandır sekmesini kullanın.',
               style: TextStyle(color: AppTheme.muted, fontSize: 10, height: 1.35),
             ),
           ],
