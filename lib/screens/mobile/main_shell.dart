@@ -58,7 +58,7 @@ class _MainShellState extends State<MainShell> {
     setState(() => index = value);
   }
 
-  Future<void> _handleSystemBack(bool didPop) async {
+  Future<void> _handleSystemBack(bool didPop, Object? result) async {
     if (didPop || !_provision.isConnected) return;
     await _provision.disconnect();
     if (!mounted) return;
@@ -89,7 +89,7 @@ class _MainShellState extends State<MainShell> {
 
     return PopScope(
       canPop: !_provision.isConnected,
-      onPopInvoked: _handleSystemBack,
+      onPopInvokedWithResult: _handleSystemBack,
       child: Scaffold(
         body: IndexedStack(index: index, children: pages),
         bottomNavigationBar: NavigationBar(
