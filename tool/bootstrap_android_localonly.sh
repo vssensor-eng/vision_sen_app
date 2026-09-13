@@ -16,18 +16,24 @@ for permission in [
     'android.permission.CHANGE_WIFI_STATE',
     'android.permission.NEARBY_WIFI_DEVICES',
     'android.permission.ACCESS_FINE_LOCATION',
+    'android.permission.ACCESS_COARSE_LOCATION',
 ]:
     text = re.sub(
         r'\s*<uses-permission[^>]+android:name="' + re.escape(permission) + r'"[^>]*/>\s*',
         '\n',
         text,
     )
+text = re.sub(
+    r'\s*<uses-feature[^>]+android:name="android\.software\.companion_device_setup"[^>]*/>\s*',
+    '\n',
+    text,
+)
 perms = '''    <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
     <uses-permission android:name="android.permission.CHANGE_WIFI_STATE" />
     <uses-permission android:name="android.permission.NEARBY_WIFI_DEVICES" android:usesPermissionFlags="neverForLocation" />
-    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
+    <uses-feature android:name="android.software.companion_device_setup" android:required="false" />
 '''
 text = re.sub(r'(<manifest[^>]*>)', r'\1\n' + perms, text, count=1)
 open(path, 'w', encoding='utf-8').write(text)
@@ -38,14 +44,21 @@ cat > "$MAIN_ACTIVITY" <<'KOTLIN'
 package com.visionsen.visionsen_setup
 
 import android.Manifest
+import android.app.Activity
+import android.companion.AssociationInfo
+import android.companion.AssociationRequest
+import android.companion.CompanionDeviceManager
+import android.companion.WifiDeviceFilter
 import android.content.Context
+import android.content.Intent
+import android.content.IntentSender
 import android.content.pm.PackageManager
 import android.net.ConnectivityManager
 import android.net.LinkProperties
 import android.net.Network
 import android.net.NetworkCapabilities
 import android.net.NetworkRequest
-import android.net.wifi.WifiInfo
+import android.net.wifi.ScanResult
 import android.net.wifi.WifiManager
 import android.net.wifi.WifiNetworkSpecifier
 import android.os.Build
@@ -61,22 +74,27 @@ import java.net.URL
 import java.nio.charset.StandardCharsets
 import java.util.concurrent.Executors
 import java.util.concurrent.atomic.AtomicBoolean
+import java.util.regex.Pattern
 
 class MainActivity : FlutterActivity() {
     private val channelName = "com.visionsen/setup"
     private val connectPermissionRequestCode = 4173
-    private val scanPermissionRequestCode = 4174
+    private val companionDeviceRequestCode = 4175
     private val ioExecutor = Executors.newSingleThreadExecutor()
     private val mainHandler = Handler(Looper.getMainLooper())
 
     private lateinit var connectivityManager: ConnectivityManager
     private lateinit var wifiManager: WifiManager
+    private lateinit var companionDeviceManager: CompanionDeviceManager
     private var methodChannel: MethodChannel? = null
+
     private var provisioningNetwork: Network? = null
     private var provisioningSsid: String? = null
     private var activeCallback: ConnectivityManager.NetworkCallback? = null
     private var pendingConnect: PendingConnect? = null
-    private var pendingScan: PendingScan? = null
+    private var pendingDiscovery: PendingDiscovery? = null
+    private var pendingAssociationInfo: AssociationInfo? = null
+    private var companionChooserLaunched = false
     private var dhcpTimeoutRunnable: Runnable? = null
 
     private data class PendingConnect(
@@ -86,7 +104,7 @@ class MainActivity : FlutterActivity() {
         val result: MethodChannel.Result,
     )
 
-    private data class PendingScan(
+    private data class PendingDiscovery(
         val ssidPrefix: String,
         val result: MethodChannel.Result,
     )
@@ -97,6 +115,8 @@ class MainActivity : FlutterActivity() {
             getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
         wifiManager = applicationContext
             .getSystemService(Context.WIFI_SERVICE) as WifiManager
+        companionDeviceManager =
+            getSystemService(Context.COMPANION_DEVICE_SERVICE) as CompanionDeviceManager
 
         methodChannel = MethodChannel(
             flutterEngine.dartExecutor.binaryMessenger,
@@ -124,85 +144,267 @@ class MainActivity : FlutterActivity() {
             return
         }
         if (!wifiManager.isWifiEnabled) {
-            result.success(mapOf("wifiEnabled" to false, "devices" to emptyList<Any>()))
+            result.success(
+                mapOf(
+                    "wifiEnabled" to false,
+                    "devices" to emptyList<Any>(),
+                    "cancelled" to false,
+                ),
+            )
+            return
+        }
+        if (!packageManager.hasSystemFeature(PackageManager.FEATURE_COMPANION_DEVICE_SETUP)) {
+            result.error(
+                "COMPANION_UNAVAILABLE",
+                "Bu telefonda Android yardımcı cihaz seçim servisi kullanılamıyor.",
+                null,
+            )
+            return
+        }
+        if (pendingDiscovery != null) {
+            result.error("WIFI_BUSY", "Cihaz arama ekranı zaten açık.", null)
             return
         }
 
-        val missing = missingScanPermissions()
-        if (missing.isNotEmpty()) {
-            pendingScan = PendingScan(prefix, result)
-            requestPermissions(missing.toTypedArray(), scanPermissionRequestCode)
-            return
-        }
-        startProvisioningScan(prefix, result)
-    }
+        val filter = WifiDeviceFilter.Builder()
+            .setNamePattern(Pattern.compile("^${Pattern.quote(prefix)}.*$"))
+            .build()
+        val request = AssociationRequest.Builder()
+            .addDeviceFilter(filter)
+            .setSingleDevice(false)
+            .build()
 
-    private fun missingScanPermissions(): List<String> {
-        val required = mutableListOf<String>()
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M &&
-            checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION) !=
-            PackageManager.PERMISSION_GRANTED) {
-            required += Manifest.permission.ACCESS_FINE_LOCATION
-        }
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
-            checkSelfPermission(Manifest.permission.NEARBY_WIFI_DEVICES) !=
-            PackageManager.PERMISSION_GRANTED) {
-            required += Manifest.permission.NEARBY_WIFI_DEVICES
-        }
-        return required
-    }
+        pendingDiscovery = PendingDiscovery(prefix, result)
+        pendingAssociationInfo = null
+        companionChooserLaunched = false
 
-    private fun startProvisioningScan(
-        ssidPrefix: String,
-        result: MethodChannel.Result,
-    ) {
-        if (!wifiManager.isWifiEnabled) {
-            result.success(mapOf("wifiEnabled" to false, "devices" to emptyList<Any>()))
-            return
-        }
-        try {
-            // startScan may be throttled on recent Android versions. We still
-            // read the cached scan list after a short delay, which is normally
-            // refreshed by the system Wi-Fi subsystem.
-            wifiManager.startScan()
-            mainHandler.postDelayed({
-                try {
-                    result.success(
-                        mapOf(
-                            "wifiEnabled" to wifiManager.isWifiEnabled,
-                            "devices" to readVisionSenScanResults(ssidPrefix),
-                        ),
-                    )
-                } catch (e: SecurityException) {
-                    result.error("PERMISSION_DENIED", e.message, null)
-                } catch (e: Exception) {
-                    result.error("WIFI_SCAN", e.message, null)
+        val callback = object : CompanionDeviceManager.Callback() {
+            @Suppress("DEPRECATION")
+            override fun onDeviceFound(chooserLauncher: IntentSender) {
+                launchCompanionChooser(chooserLauncher)
+            }
+
+            override fun onAssociationPending(intentSender: IntentSender) {
+                launchCompanionChooser(intentSender)
+            }
+
+            override fun onAssociationCreated(associationInfo: AssociationInfo) {
+                pendingAssociationInfo = associationInfo
+                if (!companionChooserLaunched) {
+                    val scan = wifiScanFromAssociation(associationInfo)
+                    val ssid = scanSsid(scan)
+                        ?: associationInfo.displayName?.toString()?.trim()?.trim('"')
+                    if (ssid != null && ssid.startsWith(prefix)) {
+                        completeCompanionDiscovery(ssid, scan?.level ?: -60, associationInfo)
+                    }
                 }
-            }, 1800L)
-        } catch (e: SecurityException) {
-            result.error("PERMISSION_DENIED", e.message, null)
+            }
+
+            override fun onFailure(errorMessage: CharSequence?) {
+                val pending = pendingDiscovery ?: return
+                pendingDiscovery = null
+                pendingAssociationInfo = null
+                companionChooserLaunched = false
+                runOnUiThread {
+                    pending.result.error(
+                        "WIFI_SCAN",
+                        errorMessage?.toString()?.takeIf { it.isNotBlank() }
+                            ?: "VisionSen cihaz seçim ekranı açılamadı.",
+                        null,
+                    )
+                }
+            }
+        }
+
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                companionDeviceManager.associate(request, mainExecutor, callback)
+            } else {
+                @Suppress("DEPRECATION")
+                companionDeviceManager.associate(request, callback, mainHandler)
+            }
         } catch (e: Exception) {
-            result.error("WIFI_SCAN", e.message, null)
+            pendingDiscovery = null
+            pendingAssociationInfo = null
+            companionChooserLaunched = false
+            result.error(
+                "WIFI_SCAN",
+                e.message ?: "VisionSen cihaz seçim ekranı açılamadı.",
+                null,
+            )
+        }
+    }
+
+    private fun launchCompanionChooser(sender: IntentSender) {
+        if (pendingDiscovery == null || companionChooserLaunched) return
+        companionChooserLaunched = true
+        runOnUiThread {
+            try {
+                startIntentSenderForResult(
+                    sender,
+                    companionDeviceRequestCode,
+                    null,
+                    0,
+                    0,
+                    0,
+                )
+            } catch (e: IntentSender.SendIntentException) {
+                val pending = pendingDiscovery
+                pendingDiscovery = null
+                pendingAssociationInfo = null
+                companionChooserLaunched = false
+                pending?.result?.error(
+                    "WIFI_SCAN",
+                    e.message ?: "Android cihaz seçim ekranı açılamadı.",
+                    null,
+                )
+            }
+        }
+    }
+
+    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
+        if (requestCode != companionDeviceRequestCode) {
+            super.onActivityResult(requestCode, resultCode, data)
+            return
+        }
+
+        val pending = pendingDiscovery
+        if (pending == null) {
+            super.onActivityResult(requestCode, resultCode, data)
+            return
+        }
+
+        if (resultCode != Activity.RESULT_OK) {
+            pendingDiscovery = null
+            pendingAssociationInfo = null
+            companionChooserLaunched = false
+            pending.result.success(
+                mapOf(
+                    "wifiEnabled" to wifiManager.isWifiEnabled,
+                    "devices" to emptyList<Any>(),
+                    "cancelled" to true,
+                ),
+            )
+            return
+        }
+
+        val association = associationFromResult(data) ?: pendingAssociationInfo
+        val scan = scanResultFromResult(data) ?: wifiScanFromAssociation(association)
+        val ssid = scanSsid(scan)
+            ?: association?.displayName?.toString()?.trim()?.trim('"')
+
+        if (ssid == null || !ssid.startsWith(pending.ssidPrefix)) {
+            pendingDiscovery = null
+            pendingAssociationInfo = null
+            companionChooserLaunched = false
+            disassociateCompanion(association, scan)
+            pending.result.error(
+                "WIFI_SCAN",
+                "Seçilen ağ VisionSen kurulum ağı olarak doğrulanamadı.",
+                null,
+            )
+            return
+        }
+
+        completeCompanionDiscovery(ssid, scan?.level ?: -60, association, scan)
+    }
+
+    private fun completeCompanionDiscovery(
+        ssid: String,
+        rssi: Int,
+        association: AssociationInfo?,
+        scan: ScanResult? = null,
+    ) {
+        val pending = pendingDiscovery ?: return
+        pendingDiscovery = null
+        pendingAssociationInfo = null
+        companionChooserLaunched = false
+        disassociateCompanion(association, scan)
+        runOnUiThread {
+            pending.result.success(
+                mapOf(
+                    "wifiEnabled" to wifiManager.isWifiEnabled,
+                    "devices" to listOf(
+                        mapOf(
+                            "ssid" to ssid,
+                            "rssi" to rssi,
+                        ),
+                    ),
+                    "cancelled" to false,
+                    "systemSelected" to true,
+                ),
+            )
         }
     }
 
     @Suppress("DEPRECATION")
-    private fun readVisionSenScanResults(ssidPrefix: String): List<Map<String, Any>> {
-        return wifiManager.scanResults
-            .asSequence()
-            .mapNotNull { scan ->
-                val ssid = scan.SSID?.trim().orEmpty()
-                if (!ssid.startsWith(ssidPrefix)) return@mapNotNull null
-                mapOf(
-                    "ssid" to ssid,
-                    "rssi" to scan.level,
+    private fun scanResultFromResult(data: Intent?): ScanResult? {
+        if (data == null) return null
+        return try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                data.getParcelableExtra(
+                    CompanionDeviceManager.EXTRA_DEVICE,
+                    ScanResult::class.java,
                 )
+            } else {
+                data.getParcelableExtra(CompanionDeviceManager.EXTRA_DEVICE) as? ScanResult
             }
-            .groupBy { it["ssid"] as String }
-            .map { (_, entries) ->
-                entries.maxByOrNull { (it["rssi"] as Int) } ?: entries.first()
+        } catch (_: Exception) {
+            null
+        }
+    }
+
+    private fun associationFromResult(data: Intent?): AssociationInfo? {
+        if (data == null || Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) {
+            return null
+        }
+        return try {
+            data.getParcelableExtra(
+                CompanionDeviceManager.EXTRA_ASSOCIATION,
+                AssociationInfo::class.java,
+            )
+        } catch (_: Exception) {
+            null
+        }
+    }
+
+    private fun wifiScanFromAssociation(info: AssociationInfo?): ScanResult? {
+        if (info == null || Build.VERSION.SDK_INT < Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+            return null
+        }
+        return try {
+            info.associatedDevice?.wifiDevice
+        } catch (_: Exception) {
+            null
+        }
+    }
+
+    @Suppress("DEPRECATION")
+    private fun scanSsid(scan: ScanResult?): String? {
+        if (scan == null) return null
+        val value = try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                scan.wifiSsid?.toString()
+            } else {
+                scan.SSID
             }
-            .sortedByDescending { it["rssi"] as Int }
+        } catch (_: Exception) {
+            scan.SSID
+        }
+        return value?.trim()?.trim('"')?.takeIf { it.isNotBlank() }
+    }
+
+    @Suppress("DEPRECATION")
+    private fun disassociateCompanion(info: AssociationInfo?, scan: ScanResult?) {
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU && info != null) {
+                companionDeviceManager.disassociate(info.id)
+            } else {
+                val bssid = scan?.BSSID?.trim().orEmpty()
+                if (bssid.isNotEmpty()) companionDeviceManager.disassociate(bssid)
+            }
+        } catch (_: Exception) {
+        }
     }
 
     private fun connectProvisioningWifi(call: MethodCall, result: MethodChannel.Result) {
@@ -243,24 +445,18 @@ class MainActivity : FlutterActivity() {
             return
         }
 
-        val permission = requiredConnectPermission()
-        if (permission != null &&
-            checkSelfPermission(permission) != PackageManager.PERMISSION_GRANTED) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+            checkSelfPermission(Manifest.permission.NEARBY_WIFI_DEVICES) !=
+            PackageManager.PERMISSION_GRANTED) {
             pendingConnect = PendingConnect(ssid, password, timeoutMs, result)
-            requestPermissions(arrayOf(permission), connectPermissionRequestCode)
+            requestPermissions(
+                arrayOf(Manifest.permission.NEARBY_WIFI_DEVICES),
+                connectPermissionRequestCode,
+            )
             return
         }
 
         startProvisioningRequest(ssid, password, timeoutMs, result)
-    }
-
-    private fun requiredConnectPermission(): String? {
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.M) return null
-        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            Manifest.permission.NEARBY_WIFI_DEVICES
-        } else {
-            Manifest.permission.ACCESS_FINE_LOCATION
-        }
     }
 
     override fun onRequestPermissionsResult(
@@ -269,42 +465,26 @@ class MainActivity : FlutterActivity() {
         grantResults: IntArray,
     ) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+        if (requestCode != connectPermissionRequestCode) return
+
+        val pending = pendingConnect ?: return
+        pendingConnect = null
         val granted = grantResults.isNotEmpty() &&
             grantResults.all { it == PackageManager.PERMISSION_GRANTED }
-
-        if (requestCode == scanPermissionRequestCode) {
-            val pending = pendingScan ?: return
-            pendingScan = null
-            if (!granted) {
-                pending.result.error(
-                    "PERMISSION_DENIED",
-                    "Wi-Fi cihaz tarama izni verilmedi.",
-                    null,
-                )
-                return
-            }
-            startProvisioningScan(pending.ssidPrefix, pending.result)
+        if (!granted) {
+            pending.result.error(
+                "NEARBY_PERMISSION_DENIED",
+                "Android Yakındaki Wi-Fi cihazları izni verilmedi.",
+                null,
+            )
             return
         }
-
-        if (requestCode == connectPermissionRequestCode) {
-            val pending = pendingConnect ?: return
-            pendingConnect = null
-            if (!granted) {
-                pending.result.error(
-                    "PERMISSION_DENIED",
-                    "Yakındaki Wi-Fi cihazlarına erişim izni verilmedi.",
-                    null,
-                )
-                return
-            }
-            startProvisioningRequest(
-                pending.ssid,
-                pending.password,
-                pending.timeoutMs,
-                pending.result,
-            )
-        }
+        startProvisioningRequest(
+            pending.ssid,
+            pending.password,
+            pending.timeoutMs,
+            pending.result,
+        )
     }
 
     private fun startProvisioningRequest(
@@ -400,7 +580,12 @@ class MainActivity : FlutterActivity() {
             provisioningNetwork = null
             provisioningSsid = null
             if (delivered.compareAndSet(false, true)) {
-                result.error("PERMISSION_DENIED", e.message, null)
+                val code = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                    "NEARBY_PERMISSION_DENIED"
+                } else {
+                    "WIFI_UNAVAILABLE"
+                }
+                result.error(code, e.message, null)
             }
         } catch (e: Exception) {
             activeCallback = null
@@ -450,21 +635,6 @@ class MainActivity : FlutterActivity() {
                 ?.hostAddress
         } catch (_: Exception) {
             null
-        }
-    }
-
-    private fun selectedSsid(network: Network): String {
-        return try {
-            val wifiInfo = connectivityManager
-                .getNetworkCapabilities(network)
-                ?.transportInfo as? WifiInfo
-            wifiInfo?.ssid
-                ?.trim('"')
-                ?.takeIf { it.isNotBlank() && it != UNKNOWN_SSID }
-                ?: provisioningSsid
-                ?: "VISIONSEN-OIM3-XXXX"
-        } catch (_: Exception) {
-            provisioningSsid ?: "VISIONSEN-OIM3-XXXX"
         }
     }
 
@@ -591,9 +761,6 @@ class MainActivity : FlutterActivity() {
     }
 
     override fun onStop() {
-        // Once a provisioning network is actually active, leaving the app must
-        // release it. Pending Android connection/permission dialogs are not
-        // cancelled here because provisioningNetwork is still null at that time.
         if (::connectivityManager.isInitialized &&
             provisioningNetwork != null &&
             !isChangingConfigurations) {
@@ -606,17 +773,14 @@ class MainActivity : FlutterActivity() {
         if (::connectivityManager.isInitialized) {
             disconnectProvisioningInternal(notifyFlutter = false)
         }
-        pendingScan = null
+        pendingDiscovery = null
+        pendingAssociationInfo = null
         ioExecutor.shutdownNow()
         methodChannel?.setMethodCallHandler(null)
         methodChannel = null
         super.onDestroy()
     }
-
-    companion object {
-        private const val UNKNOWN_SSID = "<unknown ssid>"
-    }
 }
 KOTLIN
 
-echo "Android robust provisioning hazır: discovery + exact SSID + DHCP verify + local HTTP retry + lifecycle cleanup."
+echo "Android provisioning hazır: no-location companion discovery + exact SSID + DHCP verify + local HTTP retry + lifecycle cleanup."
