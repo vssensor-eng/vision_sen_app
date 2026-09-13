@@ -292,33 +292,34 @@ class MainActivity : FlutterActivity() {
         ioExecutor.execute {
             var connection: HttpURLConnection? = null
             try {
-                connection = network.openConnection(
+                val conn = network.openConnection(
                     URL("http://192.168.4.1$path"),
                 ) as HttpURLConnection
-                connection.instanceFollowRedirects = false
-                connection.connectTimeout = timeoutMs
-                connection.readTimeout = timeoutMs
-                connection.requestMethod = method
-                connection.useCaches = false
-                connection.setRequestProperty("Cache-Control", "no-store")
-                connection.setRequestProperty("Connection", "close")
+                connection = conn
+                conn.instanceFollowRedirects = false
+                conn.connectTimeout = timeoutMs
+                conn.readTimeout = timeoutMs
+                conn.requestMethod = method
+                conn.useCaches = false
+                conn.setRequestProperty("Cache-Control", "no-store")
+                conn.setRequestProperty("Connection", "close")
 
                 if (method == "POST") {
                     val bytes = body.toByteArray(StandardCharsets.UTF_8)
-                    connection.doOutput = true
-                    connection.setRequestProperty(
+                    conn.doOutput = true
+                    conn.setRequestProperty(
                         "Content-Type",
                         "application/json; charset=utf-8",
                     )
-                    connection.setFixedLengthStreamingMode(bytes.size)
-                    connection.outputStream.use { it.write(bytes) }
+                    conn.setFixedLengthStreamingMode(bytes.size)
+                    conn.outputStream.use { it.write(bytes) }
                 }
 
-                val statusCode = connection.responseCode
+                val statusCode = conn.responseCode
                 val stream = if (statusCode in 200..399) {
-                    connection.inputStream
+                    conn.inputStream
                 } else {
-                    connection.errorStream
+                    conn.errorStream
                 }
                 val responseBody = stream
                     ?.bufferedReader(StandardCharsets.UTF_8)
