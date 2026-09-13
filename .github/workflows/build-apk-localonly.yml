@@ -25,10 +25,10 @@ jobs:
           channel: stable
           cache: true
 
-      - name: Prepare Android final provisioning
-        run: bash tool/bootstrap_android_v165.sh
+      - name: Prepare Android factory-serial provisioning
+        run: bash tool/bootstrap_android_v166.sh
 
-      - name: Verify final no-location Wi-Fi design
+      - name: Verify factory-serial no-location Wi-Fi design
         shell: bash
         run: |
           set -euo pipefail
@@ -53,8 +53,13 @@ jobs:
           grep -q 'WIFI_SECURITY' "$MAIN"
           grep -q 'ANDROID_LEGACY_LOCATION_REQUIRED' "$MAIN"
           grep -q 'await _connectDevice(devices.first)' lib/screens/wifi_provision_screen.dart
-          grep -q 'version: 1.6.5+23' pubspec.yaml
-          grep -q 'Mobil v1.6.5+23' lib/screens/wifi_provision_screen.dart
+          grep -q 'version: 1.6.6+24' pubspec.yaml
+          grep -q 'Mobil v1.6.6+24' lib/screens/wifi_provision_screen.dart
+          grep -q 'factory_data' lib/screens/wifi_provision_screen.dart
+          grep -q 'serial_locked' lib/screens/wifi_provision_screen.dart
+          ! grep -q "'serial': config.serial" lib/services/wifi_provision_service.dart
+          ! grep -q '_serial = TextEditingController' lib/screens/wifi_provision_screen.dart
+          ! grep -q 'controller: _serial' lib/screens/wifi_provision_screen.dart
 
       - name: Install dependencies
         run: flutter pub get
@@ -71,5 +76,5 @@ jobs:
       - name: Upload APK artifact
         uses: actions/upload-artifact@v5
         with:
-          name: visionsen-v1.6.5-network-state-fix-ci-apk
+          name: visionsen-v1.6.6-factory-serial-readonly-ci-apk
           path: build/app/outputs/flutter-apk/app-release.apk
