@@ -104,7 +104,7 @@ class _LoginScreenState extends State<LoginScreen> {
                     ),
                   ),
                   const SizedBox(height: 22),
-                  const Text('Giriş yapmadan BLE cihaz yapılandırmasına erişilemez.', style: TextStyle(color: AppTheme.muted, fontSize: 11)),
+                  const Text('Giriş yapmadan Wi-Fi cihaz yapılandırmasına erişilemez.', style: TextStyle(color: AppTheme.muted, fontSize: 11)),
                 ],
               ),
             ),
