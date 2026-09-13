@@ -25,8 +25,8 @@ jobs:
           channel: stable
           cache: true
 
-      - name: Prepare Android local-only provisioning
-        run: bash tool/bootstrap_android_localonly.sh
+      - name: Prepare Android hardened provisioning
+        run: bash tool/bootstrap_android_v164.sh
 
       - name: Auto-connect system-selected VisionSen device
         shell: bash
@@ -50,10 +50,15 @@ jobs:
           """
           if old not in t:
               raise SystemExit('auto-connect patch target not found')
-          p.write_text(t.replace(old, new, 1), encoding='utf-8')
+          t = t.replace(old, new, 1)
+          t = t.replace(
+              'Mobil v1.6.3+21 • Konum izinsiz Wi-Fi seçim + DHCP doğrulamalı Provisioning Protocol v2',
+              'Mobil v1.6.4+22 • Konum izinsiz Wi-Fi + sağlamlaştırılmış izin akışı',
+          )
+          p.write_text(t, encoding='utf-8')
           PYEOF
 
-      - name: Verify no-location Wi-Fi design
+      - name: Verify hardened no-location Wi-Fi design
         shell: bash
         run: |
           set -euo pipefail
@@ -65,10 +70,15 @@ jobs:
           ! grep -q 'scanResults' "$MAIN"
           grep -q 'NEARBY_WIFI_DEVICES' "$MANIFEST"
           grep -q 'neverForLocation' "$MANIFEST"
-          grep -q 'companion_device_setup' "$MANIFEST"
           grep -q 'CompanionDeviceManager' "$MAIN"
           grep -q 'WifiDeviceFilter' "$MAIN"
+          grep -q 'activeAssociationInfo' "$MAIN"
+          grep -q 'releaseActiveAssociation' "$MAIN"
+          grep -q 'postDelayed' "$MAIN"
+          grep -q 'WIFI_SECURITY' "$MAIN"
+          grep -q 'ANDROID_LEGACY_LOCATION_REQUIRED' "$MAIN"
           grep -q 'await _connectDevice(devices.first)' lib/screens/wifi_provision_screen.dart
+          grep -q 'version: 1.6.4+22' pubspec.yaml
 
       - name: Install dependencies
         run: flutter pub get
@@ -85,5 +95,5 @@ jobs:
       - name: Upload APK artifact
         uses: actions/upload-artifact@v5
         with:
-          name: visionsen-v1.6.3-no-location-wifi-ci-apk
+          name: visionsen-v1.6.4-nearby-permission-fix-ci-apk
           path: build/app/outputs/flutter-apk/app-release.apk
