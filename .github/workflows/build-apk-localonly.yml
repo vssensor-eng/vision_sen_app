@@ -43,5 +43,5 @@ jobs:
       - name: Upload APK artifact
         uses: actions/upload-artifact@v5
         with:
-          name: visionsen-v1.6.1-localonly-ci-apk
+          name: visionsen-v1.6.2-robust-wifi-ci-apk
           path: build/app/outputs/flutter-apk/app-release.apk
