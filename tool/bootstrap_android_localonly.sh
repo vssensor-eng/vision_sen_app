@@ -4,6 +4,23 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 bash "$SCRIPT_DIR/bootstrap_android.sh"
 
+# Keep the generated/test APK UI aligned with the no-location discovery flow.
+python3 - <<'PYEOF'
+from pathlib import Path
+p = Path('lib/screens/wifi_provision_screen.dart')
+if p.exists():
+    t = p.read_text(encoding='utf-8')
+    t = t.replace(
+        '3. Uygulamada listelenen VISIONSEN-OIM3 cihazını seçin.',
+        '3. Android cihaz seçim ekranında VISIONSEN-OIM3 cihazını seçin. Konum izni kullanılmaz.',
+    )
+    t = t.replace(
+        'Mobil v1.6.2+20 • Wi-Fi discovery + DHCP doğrulamalı Provisioning Protocol v2',
+        'Mobil v1.6.3+21 • Konum izinsiz Wi-Fi seçim + DHCP doğrulamalı Provisioning Protocol v2',
+    )
+    p.write_text(t, encoding='utf-8')
+PYEOF
+
 MANIFEST="android/app/src/main/AndroidManifest.xml"
 python3 - "$MANIFEST" <<'PYEOF'
 import re, sys
