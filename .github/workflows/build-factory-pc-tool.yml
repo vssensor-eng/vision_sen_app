@@ -1,9 +1,9 @@
-name: Build VisionSen Factory PC Tool
+name: Build VisionSen Factory PC Tool v0.3.2
 
 on:
   push:
     branches:
-      - factory-pc-tool-v0.3.1
+      - factory-pc-tool-v0.3.2
     paths:
       - '.factory_source/**'
       - '.factory_patch/**'
@@ -27,7 +27,7 @@ jobs:
         with:
           python-version: '3.13'
 
-      - name: Restore source archive
+      - name: Restore base source
         shell: pwsh
         run: |
           $parts = Get-ChildItem '.factory_source/part*.txt' | Sort-Object Name
@@ -36,12 +36,57 @@ jobs:
           [IO.File]::WriteAllBytes('factory-source.zip', [Convert]::FromBase64String($b64))
           Expand-Archive -Path 'factory-source.zip' -DestinationPath 'factory-src' -Force
 
-      - name: Apply v0.3.1 ESP-IDF environment fix
+      - name: Apply ESP-IDF fix and stamp v0.3.2
         shell: pwsh
         run: |
           git apply --check --directory=factory-src/VisionSen-Factory-PC-Tool-v0.3.0 .factory_patch/v0.3.1.patch
           git apply --directory=factory-src/VisionSen-Factory-PC-Tool-v0.3.0 .factory_patch/v0.3.1.patch
+          @'
+          from pathlib import Path
+          p = Path(r'factory-src/VisionSen-Factory-PC-Tool-v0.3.0/visionsen_factory_tool.py')
+          s = p.read_text(encoding='utf-8')
+          s = s.replace('APP_VERSION = "0.3.1"', 'APP_VERSION = "0.3.2"', 1)
+          s = s.replace('APP_VERSION = "0.3.2"\n', 'APP_VERSION = "0.3.2"\nBUILD_MARKER = "idf-env2-fullsource"\n', 1)
+          s = s.replace('Bu Factory Tool v0.3.1,', 'Bu Factory Tool v0.3.2,')
+          s = s.replace('self.title(f"{APP_NAME} v{APP_VERSION}")', 'self.title(f"{APP_NAME} v{APP_VERSION} [{BUILD_MARKER}]")', 1)
+          s = s.replace('ttk.Label(footer, text=f"v{APP_VERSION}").pack(side="right")', 'ttk.Label(footer, text=f"v{APP_VERSION} · {BUILD_MARKER}").pack(side="right")', 1)
+          needle = '"ESP-IDF ortamı hazırlanamadı (export.bat başarısız).\\n"\n'
+          replacement = '"ESP-IDF ortamı hazırlanamadı (export.bat başarısız).\\n"\n                    f"Factory Tool: v{APP_VERSION} / {BUILD_MARKER}\\n"\n'
+          if needle not in s:
+              raise SystemExit('Expected ESP-IDF error block not found')
+          s = s.replace(needle, replacement, 1)
+          p.write_text(s, encoding='utf-8')
+          '@ | Set-Content -Path stamp_v032.py -Encoding UTF8
+          python stamp_v032.py
           python -m py_compile factory-src/VisionSen-Factory-PC-Tool-v0.3.0/visionsen_factory_tool.py
+
+      - name: Assert exact v0.3.2 source before packaging
+        shell: pwsh
+        run: |
+          @'
+          from pathlib import Path
+          p = Path(r'factory-src/VisionSen-Factory-PC-Tool-v0.3.0/visionsen_factory_tool.py')
+          s = p.read_text(encoding='utf-8')
+          required = [
+              'APP_VERSION = "0.3.2"',
+              'BUILD_MARKER = "idf-env2-fullsource"',
+              'IDF_TOOLS_PATH:',
+              'Factory Tool: v{APP_VERSION} / {BUILD_MARKER}',
+              'env=env,',
+              'self.title(f"{APP_NAME} v{APP_VERSION} [{BUILD_MARKER}]")',
+          ]
+          forbidden = [
+              'ESP-IDF 6.1 kurulumunu ve Ayarlar > ESP-IDF Python yolunu kontrol edin.',
+              'APP_VERSION = "0.3.0"',
+              'APP_VERSION = "0.3.1"',
+          ]
+          missing = [x for x in required if x not in s]
+          present_forbidden = [x for x in forbidden if x in s]
+          if missing or present_forbidden:
+              raise SystemExit(f'SOURCE ASSERT FAILED missing={missing} forbidden_present={present_forbidden}')
+          print('SOURCE ASSERT PASS: v0.3.2 idf-env2-fullsource')
+          '@ | Set-Content -Path assert_v032.py -Encoding UTF8
+          python assert_v032.py
 
       - name: Install dependencies
         shell: pwsh
@@ -60,13 +105,13 @@ jobs:
           Pop-Location
           $exe = Join-Path $src.FullName 'dist/VisionSen-Factory-PC-Tool.exe'
           if (!(Test-Path $exe)) { throw 'EXE output not found' }
-          Copy-Item $exe 'VisionSen-Factory-PC-Tool-v0.3.1.exe'
-          Get-FileHash 'VisionSen-Factory-PC-Tool-v0.3.1.exe' -Algorithm SHA256 | Format-List
+          Copy-Item $exe 'VisionSen-Factory-PC-Tool-v0.3.2.exe'
+          Get-FileHash 'VisionSen-Factory-PC-Tool-v0.3.2.exe' -Algorithm SHA256 | Format-List
 
       - name: Upload Windows EXE
         uses: actions/upload-artifact@v4
         with:
-          name: VisionSen-Factory-PC-Tool-v0.3.1-Windows
-          path: VisionSen-Factory-PC-Tool-v0.3.1.exe
+          name: VisionSen-Factory-PC-Tool-v0.3.2-Windows
+          path: VisionSen-Factory-PC-Tool-v0.3.2.exe
           if-no-files-found: error
           retention-days: 30
