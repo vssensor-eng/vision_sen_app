@@ -1,0 +1,105 @@
+name: Build VisionSen Mobile v1.6.9 APK
+
+on:
+  push:
+    branches:
+      - mobile-v1.6.9-final
+    paths:
+      - '.mobile_v169/**'
+      - '.github/workflows/build-mobile-v169.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-android:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Apply verified v1.6.9 source payload
+        run: |
+          set -euo pipefail
+          python3 .mobile_v169/apply.py
+
+      - name: Assert provisioning/security contract
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          pub = Path('pubspec.yaml').read_text(encoding='utf-8')
+          screen = Path('lib/screens/wifi_provision_screen.dart').read_text(encoding='utf-8')
+          api = Path('lib/services/mobile_api_service.dart').read_text(encoding='utf-8')
+          svc = Path('lib/services/wifi_provision_service.dart').read_text(encoding='utf-8')
+          qr = Path('lib/screens/provision_qr_scanner_screen.dart').read_text(encoding='utf-8')
+          tests = Path('test/device_config_test.dart').read_text(encoding='utf-8')
+          required = {
+              'version': ('version: 1.6.9+27', pub),
+              'scanner dependency': ('mobile_scanner:', pub),
+              'bootstrap endpoint': ('provisioningBootstrap', api),
+              'status endpoint': ('provisioningStatus', api),
+              'determinate progress': ('LinearProgressIndicator', screen),
+              'qr-first': ('QR KODUNU TARA', screen),
+              'company registration gate': ('_registeredForCompany', screen),
+              'serial verification': ('serial_locked', screen),
+              'factory auth': ('factory_secret', screen),
+              'qr parser': ('parseProvisioningQr', svc),
+              'scanner screen': ('MobileScanner', qr),
+              '8-char tests': ('ABCDEFGH', tests),
+          }
+          missing = [name for name, (needle, text) in required.items() if needle not in text]
+          if missing:
+              raise SystemExit(f'contract assert failed: {missing}')
+          print('VisionSen Mobile v1.6.9 contract ASSERT PASS')
+          PY
+
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.24.0'
+          channel: stable
+          cache: true
+
+      - name: Prepare Android platform
+        run: bash tool/bootstrap_android_v169.sh
+
+      - name: Install dependencies
+        run: flutter pub get
+
+      - name: Static analysis
+        run: flutter analyze --no-fatal-warnings
+
+      - name: Unit tests
+        run: flutter test
+
+      - name: Build release APK
+        run: flutter build apk --release
+
+      - name: Package v1.6.9 source snapshot
+        run: |
+          set -euo pipefail
+          mkdir -p artifact-source
+          cp pubspec.yaml README.md artifact-source/
+          cp -R lib test tool artifact-source/
+          tar -czf VisionSen-Mobile-v1.6.9+27-source.tar.gz -C artifact-source .
+          sha256sum build/app/outputs/flutter-apk/app-release.apk > VisionSen-Mobile-v1.6.9+27-SHA256.txt
+
+      - name: Upload APK and source
+        uses: actions/upload-artifact@v4
+        with:
+          name: VisionSen-Mobile-v1.6.9+27-Android
+          path: |
+            build/app/outputs/flutter-apk/app-release.apk
+            VisionSen-Mobile-v1.6.9+27-source.tar.gz
+            VisionSen-Mobile-v1.6.9+27-SHA256.txt
+          if-no-files-found: error
+          retention-days: 30
