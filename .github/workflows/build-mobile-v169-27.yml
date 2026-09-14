@@ -1,0 +1,168 @@
+name: Build VisionSen Mobile v1.6.9+27 Production APK
+
+on:
+  push:
+    branches:
+      - mobile-v1.6.9-27
+    paths:
+      - '.mobile_v169/**'
+      - '.github/workflows/build-mobile-v169-27.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-android:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Apply verified v1.6.9 source payload
+        run: |
+          set -euo pipefail
+          python3 .mobile_v169/apply.py
+
+      - name: Apply current backend-compatible provisioning patch
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+
+          # Device key validation matches current web backend (6-128 chars).
+          p = Path('lib/models/device.dart')
+          s = p.read_text(encoding='utf-8')
+          s = s.replace('static const int minCompanyKeyLength = 32;', 'static const int minCompanyKeyLength = 6;')
+          p.write_text(s, encoding='utf-8')
+
+          # Provisioning screen needs the authenticated session.
+          p = Path('lib/screens/mobile/main_shell.dart')
+          s = p.read_text(encoding='utf-8')
+          s = s.replace('WifiProvisionScreen(provision: _provision),', 'WifiProvisionScreen(provision: _provision, session: widget.session),')
+          p.write_text(s, encoding='utf-8')
+
+          # Use the already-supported /company/key endpoint rather than requiring new backend routes.
+          p = Path('lib/services/mobile_api_service.dart')
+          s = p.read_text(encoding='utf-8')
+          marker = "  Future<Map<String, dynamic>> history(int sensorId, {int hours = 24}) async {"
+          if 'Future<String> companyDeviceKey()' not in s:
+              method = '''  Future<String> companyDeviceKey() async {\n    final response = await _client\n        .get(_uri('/company/key'), headers: _headers())\n        .timeout(const Duration(seconds: 15));\n    final decoded = _decode(response);\n    final value = decoded['deviceSecretKey']?.toString().trim() ?? '';\n    if (value.isEmpty) {\n      throw const MobileApiException('Firma cihaz anahtarı tanımlı değil.');\n    }\n    return value;\n  }\n\n'''
+              if marker not in s: raise SystemExit('mobile api insert marker missing')
+              s = s.replace(marker, method + marker, 1)
+          p.write_text(s, encoding='utf-8')
+
+          p = Path('lib/services/app_session.dart')
+          s = p.read_text(encoding='utf-8')
+          marker = '  Future<void> refresh() async {'
+          if 'Future<String?> fetchCompanyDeviceKey()' not in s:
+              methods = '''  Future<String?> fetchCompanyDeviceKey() async {\n    if (!authenticated) {\n      error = 'Cihaz kurulumu için önce giriş yapın.';\n      notifyListeners();\n      return null;\n    }\n    try {\n      return await api.companyDeviceKey();\n    } on MobileApiException catch (e) {\n      error = e.message;\n      if (e.statusCode == 401) await logout(localOnly: true);\n      notifyListeners();\n      return null;\n    } catch (_) {\n      error = 'Firma cihaz anahtarı alınamadı.';\n      notifyListeners();\n      return null;\n    }\n  }\n\n  Map<String, dynamic>? findDeviceBySerial(String serial) {\n    final wanted = serial.trim().toUpperCase();\n    for (final device in devices) {\n      final code = device['code']?.toString().trim().toUpperCase() ?? '';\n      if (code == wanted) return device;\n    }\n    return null;\n  }\n\n'''
+              if marker not in s: raise SystemExit('session insert marker missing')
+              s = s.replace(marker, methods + marker, 1)
+          p.write_text(s, encoding='utf-8')
+
+          p = Path('lib/screens/wifi_provision_screen.dart')
+          s = p.read_text(encoding='utf-8')
+          if "import '../config_app.dart';" not in s:
+              s = s.replace("import '../models/device.dart';\n", "import '../config_app.dart';\nimport '../models/device.dart';\n", 1)
+          if "import 'mobile/mobile_widgets.dart';" not in s:
+              s = s.replace("import '../widgets/app_shell.dart';\n", "import '../widgets/app_shell.dart';\nimport 'mobile/mobile_widgets.dart';\n", 1)
+          s = s.replace("import '../services/mobile_api_service.dart';\n", '')
+
+          old = '''  Future<bool> _ensureProvisioningBootstrap() async {\n    if (!widget.session.authenticated) {\n      _setMessage('Cihaz kurulumu için önce uygulamaya giriş yapın.', error: true);\n      return false;\n    }\n    if (!widget.session.canManage) {\n      _setMessage(\n        'Cihaz yapılandırması yalnız firma yöneticisi hesabıyla yapılabilir.',\n        error: true,\n      );\n      return false;\n    }\n    if (_bootstrap != null) return true;\n\n    _setProgress(5, 'Sunucu yetkisi doğrulanıyor');\n    try {\n      final data = await widget.session.api.provisioningBootstrap();\n      final serverUrl = data['server_url']?.toString().trim() ?? '';\n      final companyKey = data['device_secret_key']?.toString().trim() ?? '';\n      final serverError = DeviceConfig.validateServerUrl(serverUrl);\n      final keyError = DeviceConfig.validateCompanyKey(companyKey);\n      if (serverError != null || keyError != null) {\n        throw const MobileApiException(\n          'Sunucudaki cihaz kurulum bilgileri eksik veya geçersiz.',\n        );\n      }\n      if (!mounted) return false;\n      setState(() => _bootstrap = Map<String, dynamic>.from(data));\n      _setProgress(10, 'Sunucu ayarları hazır');\n      return true;\n    } on MobileApiException catch (e) {\n      _setProgress(0, 'Kurulum başlatılamadı');\n      _setMessage(\n        e.statusCode == 404\n            ? 'Mobil kurulum servisi sunucuda henüz etkin değil. Web paketini güncelleyin.'\n            : e.message,\n        error: true,\n      );\n      return false;\n    } catch (_) {\n      _setProgress(0, 'Kurulum başlatılamadı');\n      _setMessage(\n        'Kurulum bilgileri sunucudan alınamadı. İnternet bağlantısını kontrol edin.',\n        error: true,\n      );\n      return false;\n    }\n  }\n'''
+          new = '''  Future<bool> _ensureProvisioningBootstrap() async {\n    if (!widget.session.authenticated) {\n      _setMessage('Cihaz kurulumu için önce uygulamaya giriş yapın.', error: true);\n      return false;\n    }\n    if (!widget.session.canManage) {\n      _setMessage(\n        'Cihaz yapılandırması yalnız firma yöneticisi hesabıyla yapılabilir.',\n        error: true,\n      );\n      return false;\n    }\n    if (_bootstrap != null) return true;\n\n    _setProgress(5, 'Sunucu yetkisi doğrulanıyor');\n    final companyKey = await widget.session.fetchCompanyDeviceKey();\n    if (!mounted) return false;\n    if (companyKey == null || companyKey.isEmpty) {\n      _setProgress(0, 'Kurulum başlatılamadı');\n      _setMessage(widget.session.error ?? 'Firma cihaz anahtarı alınamadı.', error: true);\n      return false;\n    }\n    final base = AppConfig.mobileApiBase.replaceAll(RegExp(r'/+$'), '');\n    final serverUrl = '$base/ingest';\n    final serverError = DeviceConfig.validateServerUrl(serverUrl);\n    final keyError = DeviceConfig.validateCompanyKey(companyKey);\n    if (serverError != null || keyError != null) {\n      _setProgress(0, 'Kurulum başlatılamadı');\n      _setMessage('Sunucudaki cihaz kurulum bilgileri eksik veya geçersiz.', error: true);\n      return false;\n    }\n    setState(() {\n      _bootstrap = {'server_url': serverUrl, 'device_secret_key': companyKey};\n    });\n    _setProgress(10, 'Sunucu ayarları hazır');\n    return true;\n  }\n'''
+          if old not in s: raise SystemExit('bootstrap replacement target missing')
+          s = s.replace(old, new, 1)
+
+          old = '''    bool registered = false;\n    try {\n      final status = await widget.session.api.provisioningStatus(serial);\n      registered = status['registered'] == true;\n    } catch (_) {\n      registered = false;\n    }\n'''
+          if old not in s: raise SystemExit('registration replacement target missing')
+          s = s.replace(old, "    await widget.session.refresh();\n    final registered = widget.session.findDeviceBySerial(serial) != null;\n", 1)
+
+          old = '''      try {\n        final status = await widget.session.api.provisioningStatus(serial);\n        final online = status['online'] == true;\n        if (online) {\n          if (!mounted) return;\n          setState(() {\n            _busy = false;\n            _cloudOnline = true;\n          });\n          _setProgress(100, 'Kurulum tamamlandı');\n          _setMessage('✓ $serial başarıyla yapılandırıldı ve sunucuya bağlandı.');\n          await widget.session.refresh();\n          return;\n        }\n      } on MobileApiException catch (e) {\n        if (e.statusCode == 401 || e.statusCode == 403) break;\n      } catch (_) {}\n'''
+          new = '''      try {\n        await widget.session.refresh();\n        final device = widget.session.findDeviceBySerial(serial);\n        final raw = widget.session.company['offline_minutes'];\n        final offlineMinutes = raw is num ? raw.toInt() : int.tryParse('${raw ?? ''}') ?? 3;\n        final online = device != null && isOnline(device, offlineMinutes: offlineMinutes);\n        if (online) {\n          if (!mounted) return;\n          setState(() {\n            _busy = false;\n            _cloudOnline = true;\n          });\n          _setProgress(100, 'Kurulum tamamlandı');\n          _setMessage('✓ $serial başarıyla yapılandırıldı ve sunucuya bağlandı.');\n          return;\n        }\n        if (!widget.session.authenticated) break;\n      } catch (_) {}\n'''
+          if old not in s: raise SystemExit('cloud verification replacement target missing')
+          s = s.replace(old, new, 1)
+          p.write_text(s, encoding='utf-8')
+
+          # Match tests to the backend key contract.
+          p = Path('test/device_config_test.dart')
+          s = p.read_text(encoding='utf-8')
+          s = s.replace("test('company key accepts 32 characters and rejects 31', () {\n      final valid = baseConfig();\n      expect(valid.validate(), isNull);\n      valid.companyKey = repeatedA(31);\n      expect(valid.validate(), contains('32-128'));\n    });", "test('company key accepts backend-compatible 6+ characters', () {\n      final valid = baseConfig();\n      expect(valid.validate(), isNull);\n      valid.companyKey = 'ABCDEF';\n      expect(valid.validate(), isNull);\n      valid.companyKey = 'ABCDE';\n      expect(valid.validate(), contains('6-128'));\n    });")
+          p.write_text(s, encoding='utf-8')
+          PY
+
+      - name: Assert provisioning/security contract
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          pub = Path('pubspec.yaml').read_text(encoding='utf-8')
+          screen = Path('lib/screens/wifi_provision_screen.dart').read_text(encoding='utf-8')
+          api = Path('lib/services/mobile_api_service.dart').read_text(encoding='utf-8')
+          session = Path('lib/services/app_session.dart').read_text(encoding='utf-8')
+          svc = Path('lib/services/wifi_provision_service.dart').read_text(encoding='utf-8')
+          required = {
+              'version': ('version: 1.6.9+27', pub),
+              'company key endpoint': ("'/company/key'", api),
+              'login session key loader': ('fetchCompanyDeviceKey', session),
+              'determinate progress': ('LinearProgressIndicator', screen),
+              'qr-first': ('QR KODUNU TARA', screen),
+              'technical fields hidden': ('Sunucu adresi ve firma anahtarı', screen),
+              'serial verification': ('serial_locked', screen),
+              'factory auth': ('factory_secret', screen),
+              '8-char QR': ('static ProvisioningQrData? tryParse', svc),
+              'cloud check existing bundle': ('findDeviceBySerial', screen),
+          }
+          missing = [name for name, (needle, text) in required.items() if needle not in text]
+          if missing: raise SystemExit(f'contract assert failed: {missing}')
+          if 'widget.session.api.provisioningBootstrap()' in screen or 'widget.session.api.provisioningStatus(serial)' in screen:
+              raise SystemExit('unsupported provisioning backend endpoints still used')
+          print('VisionSen Mobile v1.6.9+27 production contract ASSERT PASS')
+          PY
+
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.24.0'
+          channel: stable
+          cache: true
+
+      - name: Prepare Android platform
+        run: bash tool/bootstrap_android_v169.sh
+
+      - name: Install dependencies
+        run: flutter pub get
+
+      - name: Static analysis
+        run: flutter analyze --no-fatal-warnings
+
+      - name: Unit tests
+        run: flutter test
+
+      - name: Build release APK
+        run: flutter build apk --release
+
+      - name: Package APK and source
+        run: |
+          set -euo pipefail
+          mkdir -p artifact-source out
+          cp pubspec.yaml README.md artifact-source/
+          cp -R lib test tool artifact-source/
+          zip -qr out/VisionSen-Mobile-v1.6.9+27-source.zip artifact-source
+          cp build/app/outputs/flutter-apk/app-release.apk out/VisionSen-Mobile-v1.6.9+27.apk
+          sha256sum out/VisionSen-Mobile-v1.6.9+27.apk > out/VisionSen-Mobile-v1.6.9+27-SHA256.txt
+
+      - name: Upload APK and source
+        uses: actions/upload-artifact@v4
+        with:
+          name: VisionSen-Mobile-v1.6.9+27-Production-Android
+          path: out/
+          if-no-files-found: error
+          retention-days: 30
