@@ -24,6 +24,17 @@ jobs:
         run: |
           set -euo pipefail
           python3 .mobile_v169/apply.py
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path('lib/screens/wifi_provision_screen.dart')
+          s = p.read_text(encoding='utf-8')
+          old = """    if (!await _ensureProvisioningBootstrap()) return;\n\n    final qr = await Navigator.of(context).push<ProvisioningQrData>(\n"""
+          new = """    if (!await _ensureProvisioningBootstrap()) return;\n    if (!mounted) return;\n\n    final qr = await Navigator.of(context).push<ProvisioningQrData>(\n"""
+          if old not in s:
+              raise SystemExit('mounted lifecycle patch target missing')
+          p.write_text(s.replace(old, new, 1), encoding='utf-8')
+          print('Applied mounted lifecycle guard before QR navigation')
+          PY
 
       - name: Assert provisioning/security contract
         run: |
@@ -49,6 +60,7 @@ jobs:
               'qr parser': ('static ProvisioningQrData? tryParse', svc),
               'scanner screen': ('MobileScanner', qr),
               '8-char tests': ('7K4P92XZ', tests),
+              'mounted guard': ('if (!mounted) return;\n\n    final qr = await Navigator.of(context)', screen),
           }
           missing = [name for name, (needle, text) in required.items() if needle not in text]
           if missing:
