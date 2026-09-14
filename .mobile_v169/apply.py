@@ -14,4 +14,17 @@ if actual != expected:
     raise SystemExit(f'payload sha mismatch: {actual}')
 code = compile(raw, '.mobile_v169/mobile169_apply.py', 'exec')
 exec(code, {'__name__': '__main__'})
+
+# Flutter analyzer: Navigator must not reuse BuildContext across the async bootstrap gap.
+p = Path('lib/screens/wifi_provision_screen.dart')
+s = p.read_text(encoding='utf-8')
+old = "    if (!await _ensureProvisioningBootstrap()) return;\n\n    final qr = await Navigator.of(context).push<ProvisioningQrData>(\n"
+new = "    if (!await _ensureProvisioningBootstrap()) return;\n    if (!mounted) return;\n\n    final qr = await Navigator.of(context).push<ProvisioningQrData>(\n"
+if old in s:
+    s = s.replace(old, new, 1)
+elif new not in s:
+    raise SystemExit('mounted lifecycle guard patch target missing')
+p.write_text(s, encoding='utf-8')
+
 print(f'VisionSen mobile v1.6.9 payload applied, sha256={actual}')
+print('Applied mounted lifecycle guard before QR navigation')
