@@ -44,9 +44,9 @@ jobs:
         run: |
           $ErrorActionPreference = 'Stop'
           Push-Location 'factory-src/VisionSen-Factory-PC-Tool-v0.3.2'
-          git apply --check '../../../.factory_patch/v0.3.3.patch'
+          git apply --check '../../.factory_patch/v0.3.3.patch'
           if ($LASTEXITCODE -ne 0) { throw "git apply --check failed with exit code $LASTEXITCODE" }
-          git apply '../../../.factory_patch/v0.3.3.patch'
+          git apply '../../.factory_patch/v0.3.3.patch'
           if ($LASTEXITCODE -ne 0) { throw "git apply failed with exit code $LASTEXITCODE" }
           Pop-Location
 
