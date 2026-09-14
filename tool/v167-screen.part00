@@ -1,0 +1,220 @@
+import 'package:flutter/material.dart';
+
+import '../models/device.dart';
+import '../services/wifi_provision_service.dart';
+import '../theme/app_theme.dart';
+import '../widgets/app_shell.dart';
+
+class WifiProvisionScreen extends StatefulWidget {
+  final WifiProvisionService provision;
+
+  const WifiProvisionScreen({super.key, required this.provision});
+
+  @override
+  State<WifiProvisionScreen> createState() => _WifiProvisionScreenState();
+}
+
+class _WifiProvisionScreenState extends State<WifiProvisionScreen> {
+  late final WifiProvisionService _provision;
+  final DeviceConfig _config = DeviceConfig();
+
+  final _ssid = TextEditingController();
+  final _password = TextEditingController();
+  final _deviceName = TextEditingController();
+  final _serverUrl = TextEditingController(
+    text: 'https://www.vsias.com/wp-json/oim/v1/ingest',
+  );
+  final _companyKey = TextEditingController();
+  final _currentCompanyKey = TextEditingController();
+
+  bool _busy = false;
+  bool _saved = false;
+  bool _showWifiPassword = false;
+  bool _showCompanyKey = false;
+  bool _showCurrentCompanyKey = false;
+  bool _changeCompanyKey = false;
+  int _sendInterval = 1;
+  Map<String, dynamic>? _deviceInfo;
+  List<ProvisioningWifiDevice> _foundDevices = const [];
+  String? _connectingSsid;
+  String? _message;
+  bool _messageIsError = false;
+
+  bool get _connected => _provision.isConnected;
+
+  @override
+  void initState() {
+    super.initState();
+    _provision = widget.provision;
+    _provision.connectionNotifier.addListener(_onConnectionChanged);
+  }
+
+  void _onConnectionChanged() {
+    if (!mounted) return;
+    if (!_provision.isConnected) {
+      _deviceInfo = null;
+      _connectingSsid = null;
+    }
+    setState(() {});
+  }
+
+  @override
+  void dispose() {
+    _provision.connectionNotifier.removeListener(_onConnectionChanged);
+    _ssid.dispose();
+    _password.dispose();
+    _deviceName.dispose();
+    _serverUrl.dispose();
+    _companyKey.dispose();
+    _currentCompanyKey.dispose();
+    super.dispose();
+  }
+
+  void _setMessage(String? value, {bool error = false}) {
+    if (!mounted) return;
+    setState(() {
+      _message = value;
+      _messageIsError = error;
+    });
+  }
+
+  Future<void> _scanDevices() async {
+    if (_busy || _connected) return;
+    setState(() {
+      _busy = true;
+      _saved = false;
+      _foundDevices = const [];
+      _message = 'Yakındaki VisionSen cihazları aranıyor...';
+      _messageIsError = false;
+    });
+
+    final devices = await _provision.scanDevices();
+    if (!mounted) return;
+    setState(() {
+      _busy = false;
+      _foundDevices = devices;
+    });
+
+    if (devices.isEmpty) {
+      _setMessage(
+        _provision.lastError ?? 'Yakında VisionSen kurulum cihazı bulunamadı.',
+        error: true,
+      );
+      return;
+    }
+
+    if (devices.length == 1) {
+      await _connectDevice(devices.first);
+      return;
+    }
+
+    _setMessage(
+      '${devices.length} VisionSen cihazı bulundu. Bağlanmak istediğiniz cihazı seçin.',
+    );
+  }
+
+  Future<String?> _askProvisioningSecret(ProvisioningWifiDevice device) async {
+    final controller = TextEditingController();
+    var obscure = true;
+    String? validationError;
+
+    final result = await showDialog<String>(
+      context: context,
+      barrierDismissible: false,
+      builder: (dialogContext) => StatefulBuilder(
+        builder: (context, setDialogState) => AlertDialog(
+          title: const Text('Cihaz kurulum kodu'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                device.ssid,
+                style: const TextStyle(fontWeight: FontWeight.w800),
+              ),
+              const SizedBox(height: 8),
+              const Text(
+                'Cihaz etiketindeki 16-32 karakterlik üretici kurulum kodunu girin. Bu kod telefonda kaydedilmez.',
+              ),
+              const SizedBox(height: 12),
+              TextField(
+                controller: controller,
+                autofocus: true,
+                obscureText: obscure,
+                autocorrect: false,
+                enableSuggestions: false,
+                textCapitalization: TextCapitalization.characters,
+                decoration: InputDecoration(
+                  labelText: 'Kurulum kodu',
+                  errorText: validationError,
+                  suffixIcon: IconButton(
+                    onPressed: () => setDialogState(() => obscure = !obscure),
+                    icon: Icon(
+                      obscure ? Icons.visibility_outlined : Icons.visibility_off_outlined,
+                    ),
+                  ),
+                ),
+                onSubmitted: (_) {
+                  final secret = controller.text.trim();
+                  final error = WifiProvisionService.validateProvisioningSecret(secret);
+                  if (error != null) {
+                    setDialogState(() => validationError = error);
+                    return;
+                  }
+                  Navigator.of(dialogContext).pop(secret);
+                },
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(dialogContext).pop(),
+              child: const Text('İptal'),
+            ),
+            FilledButton(
+              onPressed: () {
+                final secret = controller.text.trim();
+                final error = WifiProvisionService.validateProvisioningSecret(secret);
+                if (error != null) {
+                  setDialogState(() => validationError = error);
+                  return;
+                }
+                Navigator.of(dialogContext).pop(secret);
+              },
+              child: const Text('Bağlan'),
+            ),
+          ],
+        ),
+      ),
+    );
+    controller.dispose();
+    return result;
+  }
+
+  Future<void> _connectDevice(ProvisioningWifiDevice device) async {
+    if (_busy) return;
+    final provisioningSecret = await _askProvisioningSecret(device);
+    if (!mounted || provisioningSecret == null) return;
+
+    setState(() {
+      _busy = true;
+      _saved = false;
+      _connectingSsid = device.ssid;
+      _message = '${device.ssid} cihazına bağlanılıyor...';
+      _messageIsError = false;
+    });
+
+    final connected = await _provision.connectToDevice(device.ssid, provisioningSecret);
+    if (!mounted) return;
+    if (!connected) {
+      setState(() {
+        _busy = false;
+        _connectingSsid = null;
+      });
+      _setMessage(
+        _provision.lastError ?? 'VisionSen cihazına bağlanılamadı.',
+        error: true,
+      );
+      return;
+    }
+

@@ -1,0 +1,80 @@
+name: Build Android Local-Only WiFi
+
+on:
+  pull_request:
+    branches: [ main, master ]
+  workflow_dispatch: {}
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v5
+
+      - name: Set up Java
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.24.0'
+          channel: stable
+          cache: true
+
+      - name: Prepare Android factory-serial provisioning
+        run: bash tool/bootstrap_android_v166.sh
+
+      - name: Verify factory-serial no-location Wi-Fi design
+        shell: bash
+        run: |
+          set -euo pipefail
+          MANIFEST=android/app/src/main/AndroidManifest.xml
+          MAIN=android/app/src/main/kotlin/com/visionsen/visionsen_setup/MainActivity.kt
+          ! grep -q 'ACCESS_FINE_LOCATION' "$MANIFEST"
+          ! grep -q 'ACCESS_COARSE_LOCATION' "$MANIFEST"
+          ! grep -q 'startScan' "$MAIN"
+          ! grep -q 'scanResults' "$MAIN"
+          grep -q 'NEARBY_WIFI_DEVICES' "$MANIFEST"
+          grep -q 'neverForLocation' "$MANIFEST"
+          grep -q 'CHANGE_NETWORK_STATE' "$MANIFEST"
+          grep -q 'ACCESS_NETWORK_STATE' "$MANIFEST"
+          grep -q 'CHANGE_WIFI_STATE' "$MANIFEST"
+          ! grep -q 'WRITE_SETTINGS' "$MANIFEST"
+          grep -q 'CompanionDeviceManager' "$MAIN"
+          grep -q 'WifiDeviceFilter' "$MAIN"
+          grep -q 'activeAssociationInfo' "$MAIN"
+          grep -q 'releaseActiveAssociation' "$MAIN"
+          grep -q 'APP_NETWORK_PERMISSION_MISSING' "$MAIN"
+          grep -q 'Manifest.permission.CHANGE_NETWORK_STATE' "$MAIN"
+          grep -q 'WIFI_SECURITY' "$MAIN"
+          grep -q 'ANDROID_LEGACY_LOCATION_REQUIRED' "$MAIN"
+          grep -q 'await _connectDevice(devices.first)' lib/screens/wifi_provision_screen.dart
+          grep -q 'version: 1.6.6+24' pubspec.yaml
+          grep -q 'Mobil v1.6.6+24' lib/screens/wifi_provision_screen.dart
+          grep -q 'factory_data' lib/screens/wifi_provision_screen.dart
+          grep -q 'serial_locked' lib/screens/wifi_provision_screen.dart
+          ! grep -q "'serial': config.serial" lib/services/wifi_provision_service.dart
+          ! grep -q '_serial = TextEditingController' lib/screens/wifi_provision_screen.dart
+          ! grep -q 'controller: _serial' lib/screens/wifi_provision_screen.dart
+
+      - name: Install dependencies
+        run: flutter pub get
+
+      - name: Static analysis
+        run: flutter analyze
+
+      - name: Unit tests
+        run: flutter test
+
+      - name: Build release APK
+        run: flutter build apk --release
+
+      - name: Upload APK artifact
+        uses: actions/upload-artifact@v5
+        with:
+          name: visionsen-v1.6.6-factory-serial-readonly-ci-apk
+          path: build/app/outputs/flutter-apk/app-release.apk

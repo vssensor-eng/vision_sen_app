@@ -87,7 +87,7 @@ class StepHeader extends StatelessWidget {
       showDragHandle: true,
       builder: (_) => const Padding(
         padding: EdgeInsets.fromLTRB(22, 4, 22, 30),
-        child: Text('Bu ekran cihaz kurulum adımının bir parçasıdır. Bilgiler BLE üzerinden cihaza aktarılır.'),
+        child: Text('Bu ekran cihaz kurulum adımının bir parçasıdır. Bilgiler cihazın geçici yerel Wi-Fi ağı üzerinden aktarılır.'),
       ),
     );
   }

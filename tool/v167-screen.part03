@@ -1,0 +1,142 @@
+                              _showWifiPassword
+                                  ? Icons.visibility_off_outlined
+                                  : Icons.visibility_outlined,
+                            ),
+                          ),
+                        ),
+                      ),
+                      const SizedBox(height: 12),
+                      TextField(
+                        controller: _deviceName,
+                        decoration: _decoration(
+                          'Cihaz adı',
+                          Icons.label_outline,
+                          hint: 'Depo Sensör 1',
+                        ),
+                      ),
+                      const SizedBox(height: 12),
+                      DropdownButtonFormField<int>(
+                        value: _sendInterval,
+                        decoration: _decoration(
+                          'Gönderim aralığı',
+                          Icons.schedule_send_outlined,
+                        ),
+                        items: DeviceConfig.supportedSendIntervals
+                            .map(
+                              (minutes) => DropdownMenuItem<int>(
+                                value: minutes,
+                                child: Text('$minutes dakika'),
+                              ),
+                            )
+                            .toList(),
+                        onChanged: (value) {
+                          if (value != null) {
+                            setState(() => _sendInterval = value);
+                          }
+                        },
+                      ),
+                      const SizedBox(height: 12),
+                      TextField(
+                        controller: _serverUrl,
+                        keyboardType: TextInputType.url,
+                        autocorrect: false,
+                        decoration: _decoration(
+                          'Sunucu URL',
+                          Icons.cloud_outlined,
+                        ),
+                      ),
+                      if (_config.deviceAlreadyConfigured) ...[
+                        const SizedBox(height: 12),
+                        TextField(
+                          controller: _currentCompanyKey,
+                          obscureText: !_showCurrentCompanyKey,
+                          autocorrect: false,
+                          decoration: _decoration(
+                            'Mevcut firma anahtarı',
+                            Icons.vpn_key_outlined,
+                            suffix: IconButton(
+                              onPressed: () => setState(
+                                () => _showCurrentCompanyKey =
+                                    !_showCurrentCompanyKey,
+                              ),
+                              icon: Icon(
+                                _showCurrentCompanyKey
+                                    ? Icons.visibility_off_outlined
+                                    : Icons.visibility_outlined,
+                              ),
+                            ),
+                          ),
+                        ),
+                        CheckboxListTile(
+                          contentPadding: EdgeInsets.zero,
+                          value: _changeCompanyKey,
+                          title: const Text('Firma anahtarını değiştir'),
+                          onChanged: (value) => setState(
+                            () => _changeCompanyKey = value == true,
+                          ),
+                        ),
+                      ],
+                      if (!_config.deviceAlreadyConfigured ||
+                          _changeCompanyKey) ...[
+                        const SizedBox(height: 4),
+                        TextField(
+                          controller: _companyKey,
+                          obscureText: !_showCompanyKey,
+                          autocorrect: false,
+                          decoration: _decoration(
+                            _config.deviceAlreadyConfigured
+                                ? 'Yeni firma anahtarı'
+                                : 'Firma anahtarı',
+                            Icons.key_outlined,
+                            suffix: IconButton(
+                              onPressed: () => setState(
+                                () => _showCompanyKey = !_showCompanyKey,
+                              ),
+                              icon: Icon(
+                                _showCompanyKey
+                                    ? Icons.visibility_off_outlined
+                                    : Icons.visibility_outlined,
+                              ),
+                            ),
+                          ),
+                        ),
+                      ],
+                      const SizedBox(height: 18),
+                      PrimaryButton(
+                        text: _busy
+                            ? 'CİHAZA KAYDEDİLİYOR...'
+                            : 'AYARLARI CİHAZA KAYDET',
+                        icon: Icons.save_outlined,
+                        onPressed: _busy ? null : _save,
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+              if (_saved) ...[
+                const SizedBox(height: 14),
+                SecondaryButton(
+                  text: 'BAŞKA CİHAZ YAPILANDIR',
+                  onPressed: () {
+                    setState(() {
+                      _saved = false;
+                      _deviceInfo = null;
+                      _config.deviceAlreadyConfigured = false;
+                    });
+                    _scanDevices();
+                  },
+                ),
+              ],
+              const SizedBox(height: 20),
+              const Text(
+                'Mobil v1.6.7+25 • Cihaza özel provisioning secret',
+                textAlign: TextAlign.center,
+                style: TextStyle(color: AppTheme.muted, fontSize: 10.5),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}

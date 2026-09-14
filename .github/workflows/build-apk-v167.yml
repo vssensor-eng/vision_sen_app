@@ -1,0 +1,64 @@
+name: Build Android v1.6.7 Factory Secret
+
+on:
+  pull_request:
+    branches: [ main, master ]
+  workflow_dispatch: {}
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v5
+
+      - name: Assemble v1.6.7 provisioning screen
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat tool/v167-screen.part00 tool/v167-screen.part01 tool/v167-screen.part02 tool/v167-screen.part03 > lib/screens/wifi_provision_screen.dart
+
+      - name: Set up Java
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.24.0'
+          channel: stable
+          cache: true
+
+      - name: Prepare Android platform
+        run: bash tool/bootstrap_android_v166.sh
+
+      - name: Install dependencies
+        run: flutter pub get
+
+      - name: Verify v1.6.7 factory-secret contract
+        shell: bash
+        run: |
+          set -euo pipefail
+          grep -q 'version: 1.6.7+25' pubspec.yaml
+          grep -q 'environmentMonitor: {3}' lib/models/device.dart
+          grep -q 'validateProvisioningSecret' lib/services/wifi_provision_service.dart
+          grep -q 'Cihaz kurulum kodu' lib/screens/wifi_provision_screen.dart
+          grep -q 'factory_secret' lib/screens/wifi_provision_screen.dart
+          ! grep -q "VisionSenOIM3" lib/services/wifi_provision_service.dart
+
+      - name: Static analysis
+        run: flutter analyze
+
+      - name: Unit tests
+        run: flutter test
+
+      - name: Build release APK
+        run: flutter build apk --release
+
+      - name: Upload APK artifact
+        uses: actions/upload-artifact@v5
+        with:
+          name: visionsen-v1.6.7-factory-secret-ci-apk
+          path: build/app/outputs/flutter-apk/app-release.apk
