@@ -1,0 +1,5 @@
+pyserial>=3.5
+qrcode[pil]>=7.4
+Pillow>=10.0
+esptool>=5.0
+esp-idf-nvs-partition-gen>=0.1
