@@ -1,0 +1,134 @@
+name: Build VisionSen OIM3 v2.1.8 Final
+
+on:
+  push:
+    branches: [oim3-v2.1.8-30s-provision]
+    paths: ['.github/workflows/build-oim3-v218-30s-provision-final.yml']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Restore and promote exact v2.1.7 source
+        shell: python
+        run: |
+          from pathlib import Path
+          import base64, hashlib, lzma, shutil, tarfile
+
+          parts=sorted(Path('.factory_v040_fw').glob('part*.txt'))
+          assert len(parts)==13, len(parts)
+          raw=base64.b64decode(''.join(p.read_text().strip() for p in parts))
+          assert hashlib.sha256(raw).hexdigest()=='8e5851db02bcf7c248df6844b435a6bf12550a2fad4e58d1bc7d7770a6659a73'
+          Path('fw217.tar.xz').write_bytes(raw)
+          shutil.rmtree('fwsrc',ignore_errors=True); Path('fwsrc').mkdir()
+          with tarfile.open('fw217.tar.xz','r:xz') as t: t.extractall('fwsrc')
+          src=Path('fwsrc/visionsen_oim3_idf_v2_1_7_qr_factory')
+          dst=Path('fwsrc/visionsen_oim3_idf_v2_1_8_qr_factory')
+          shutil.copytree(src,dst)
+
+          def r(path,old,new):
+              p=dst/path; s=p.read_text(encoding='utf-8')
+              assert s.count(old)==1,(path,old,s.count(old))
+              p.write_text(s.replace(old,new,1),encoding='utf-8')
+
+          r('components/oim_board/include/oim_board.hpp','inline constexpr const char *FIRMWARE_VERSION = "2.1.7";','inline constexpr const char *FIRMWARE_VERSION = "2.1.8";')
+          r('components/oim_board/include/oim_board.hpp','inline constexpr const char *FIRMWARE_NAME = "VS-ESP-IDF-V2.1.7-OIM3-FACTORY-QA";','inline constexpr const char *FIRMWARE_NAME = "VS-ESP-IDF-V2.1.8-OIM3-FACTORY-QA";')
+          r('components/oim_board/include/oim_board.hpp','inline constexpr unsigned WIFI_PROVISION_TIMEOUT_SECONDS = 120;','inline constexpr unsigned WIFI_PROVISION_TIMEOUT_SECONDS = 120;\ninline constexpr unsigned WIFI_RECONFIG_POWERON_WINDOW_SECONDS = 30;')
+          r('CMakeLists.txt','set(PROJECT_VER "2.1.7")','set(PROJECT_VER "2.1.8")')
+
+          app=dst/'main/app_main.cpp'; s=app.read_text(encoding='utf-8')
+          old='''    if (reset_reason == ESP_RST_POWERON) {\n        ESP_LOGI(TAG, "Real power-on: opening Wi-Fi reconfiguration AP for %u seconds",\n                 oim::board::WIFI_PROVISION_TIMEOUT_SECONDS);\n        (void)oim::provision::run(oim::board::WIFI_PROVISION_TIMEOUT_SECONDS);\n        sleep_seconds(1U, "Power-on Wi-Fi provisioning window closed; restarting into telemetry-only wake");\n    }\n'''
+          new='''    if (reset_reason == ESP_RST_POWERON) {\n        ESP_LOGI(TAG, "Real power-on: opening Wi-Fi reconfiguration AP for %u seconds",\n                 oim::board::WIFI_RECONFIG_POWERON_WINDOW_SECONDS);\n        (void)oim::provision::run(oim::board::WIFI_RECONFIG_POWERON_WINDOW_SECONDS);\n        sleep_seconds(1U, "Power-on Wi-Fi provisioning window closed; restarting into telemetry-only wake");\n    }\n'''
+          assert s.count(old)==1
+          app.write_text(s.replace(old,new,1),encoding='utf-8')
+
+          p=dst/'components/oim_provision/oim_provision.cpp'; s=p.read_text(encoding='utf-8')
+          old='''        if ((now - started_ms) >= absolute_limit_seconds * 1000UL) {\n            ESP_LOGW(TAG, "Wi-Fi provisioning absolute session cap reached");\n            break;\n        }\n\n        if (s_client_count.load(std::memory_order_relaxed) > 0U) {\n            client_seen = true;\n            if ((now - s_last_activity_ms.load(std::memory_order_relaxed)) >=\n                oim::board::WIFI_PROVISION_CLIENT_IDLE_SECONDS * 1000UL) {\n                ESP_LOGW(TAG, "Provisioning client idle timeout reached");\n                break;\n            }\n        } else {\n'''
+          new='''        if (!client_seen &&\n            (now - started_ms) >= absolute_limit_seconds * 1000UL) {\n            ESP_LOGW(TAG, "Wi-Fi provisioning pre-client session cap reached");\n            break;\n        }\n\n        if (s_client_count.load(std::memory_order_relaxed) > 0U) {\n            if (!client_seen) {\n                client_seen = true;\n                ESP_LOGI(TAG, "Provisioning client acquired; initial no-client timeout cancelled");\n            }\n            if ((now - s_last_activity_ms.load(std::memory_order_relaxed)) >=\n                oim::board::WIFI_PROVISION_CLIENT_IDLE_SECONDS * 1000UL) {\n                ESP_LOGW(TAG, "Provisioning client idle timeout reached");\n                break;\n            }\n        } else {\n'''
+          assert s.count(old)==1
+          p.write_text(s.replace(old,new,1),encoding='utf-8')
+
+          readme=dst/'README.md'; s=readme.read_text(encoding='utf-8')
+          s=s.replace('# VisionSen ESP-IDF V2.1.7 — FACTORY QA','# VisionSen ESP-IDF V2.1.8 — FACTORY QA',1)
+          s=s.replace('Firmware: `2.1.7`','Firmware: `2.1.8`',1)
+          s='''## V2.1.8 — 30 s power-on provisioning\n\nConfigured real power-on waits 30 s for an APK client. No client: telemetry starts after the window. Client connects: the initial deadline is cancelled and provisioning blocks telemetry/deep-sleep until configuration finishes or the existing idle/disconnect fail-safe releases it. Deep-sleep wakes do not open the AP. Unconfigured first-time discovery remains 120 s.\n\n'''+s
+          readme.write_text(s,encoding='utf-8')
+          (dst/'V2.1.8_POWERON_PROVISIONING_SUMMARY.md').write_text('Configured POWERON AP=30 s; first client cancels initial deadline; deep-sleep wake does not open AP; unconfigured discovery=120 s.\n',encoding='utf-8')
+
+          # Source contract checks independent of ESP-IDF raw sdkconfig boolean formatting.
+          board=(dst/'components/oim_board/include/oim_board.hpp').read_text()
+          app=(dst/'main/app_main.cpp').read_text()
+          provision=(dst/'components/oim_provision/oim_provision.cpp').read_text()
+          assert 'FIRMWARE_VERSION = "2.1.8"' in board
+          assert 'WIFI_RECONFIG_POWERON_WINDOW_SECONDS = 30' in board
+          assert 'WIFI_RECONFIG_POWERON_WINDOW_SECONDS' in app
+          assert 'if (!client_seen &&' in provision
+          assert 'initial no-client timeout cancelled' in provision
+          print('V2.1.8 source contract PASS')
+
+      - name: Build with ESP-IDF 6.1
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker pull espressif/idf:v6.1
+          docker run --rm \
+            -v "$PWD/fwsrc/visionsen_oim3_idf_v2_1_8_qr_factory:/project" \
+            -w /project espressif/idf:v6.1 \
+            bash -lc 'idf.py set-target esp32 && idf.py build'
+
+      - name: Validate build and package
+        shell: python
+        run: |
+          from pathlib import Path
+          import hashlib,json,shutil,zipfile
+          root=Path('fwsrc/visionsen_oim3_idf_v2_1_8_qr_factory'); build=root/'build'
+          assert (build/'visionsen_oim3.bin').is_file()
+          assert (build/'visionsen_oim3.elf').is_file()
+          # Verify actual compiled app descriptor strings are present in ELF.
+          elf=(build/'visionsen_oim3.elf').read_bytes()
+          assert b'2.1.8' in elf and b'VS-ESP-IDF-V2.1.8-OIM3-FACTORY-QA' in elf
+          data=json.loads((build/'flasher_args.json').read_text())
+          files=data.get('flash_files') or {}; assert files
+          expected={0x1000,0x8000,0x10000,0x20000}
+          assert {int(str(k),0) for k in files}==expected,files
+          protected=[(0x12000,0x18000,'factory_data'),(0x320000,0x400000,'storage')]
+          pkg=Path('package'); shutil.rmtree(pkg,ignore_errors=True); pkg.mkdir()
+          hashes={}; rewritten={}
+          for a,rel in files.items():
+              addr=int(str(a),0); src=build/rel; assert src.is_file(),src
+              end=addr+src.stat().st_size
+              for lo,hi,label in protected: assert not(addr<hi and end>lo),(src,label)
+              dst=pkg/src.name; shutil.copy2(src,dst)
+              rewritten[a]=src.name; hashes[src.name]=hashlib.sha256(dst.read_bytes()).hexdigest()
+          data['flash_files']=rewritten
+          (pkg/'flasher_args.json').write_text(json.dumps(data,indent=2))
+          manifest={'firmware_version':'2.1.8','target':'esp32','configured_poweron_ap_seconds':30,'unconfigured_ap_seconds':120,'client_connect_cancels_initial_timeout':True,'deep_sleep_wake_opens_ap':False,'sha256':hashes}
+          (pkg/'visionsen_firmware_manifest.json').write_text(json.dumps(manifest,indent=2))
+          out=Path('out'); out.mkdir()
+          fw=out/'VisionSen-OIM3-v2.1.8-Full-Flash.zip'
+          with zipfile.ZipFile(fw,'w',zipfile.ZIP_DEFLATED) as z:
+              for p in sorted(pkg.iterdir()): z.write(p,p.name)
+          srczip=out/'VisionSen-OIM3-IDF-v2.1.8-QR-Factory-QA-source.zip'
+          with zipfile.ZipFile(srczip,'w',zipfile.ZIP_DEFLATED) as z:
+              for p in root.rglob('*'):
+                  if p.is_file() and 'build' not in p.relative_to(root).parts:
+                      z.write(p,Path(root.name)/p.relative_to(root))
+          lines=[]
+          for p in (fw,srczip):
+              h=hashlib.sha256(p.read_bytes()).hexdigest(); lines.append(f'{h}  {p.name}'); print(lines[-1])
+          (out/'SHA256SUMS.txt').write_text('\n'.join(lines)+'\n')
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: VisionSen-OIM3-v2.1.8-Final
+          path: out/
+          if-no-files-found: error
+          retention-days: 30
