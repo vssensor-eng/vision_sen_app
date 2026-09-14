@@ -5,8 +5,7 @@ on:
     branches:
       - factory-pc-tool-v0.3.2
     paths:
-      - '.factory_source/**'
-      - '.factory_patch/**'
+      - '.factory_v032/**'
       - '.github/workflows/build-factory-pc-tool.yml'
   workflow_dispatch:
 
@@ -27,45 +26,23 @@ jobs:
         with:
           python-version: '3.13'
 
-      - name: Restore base source
+      - name: Restore exact v0.3.2 full source
         shell: pwsh
         run: |
-          $parts = Get-ChildItem '.factory_source/part*.txt' | Sort-Object Name
-          if ($parts.Count -ne 6) { throw "Expected 6 source archive parts, found $($parts.Count)" }
+          $parts = Get-ChildItem '.factory_v032/part*.txt' | Sort-Object Name
+          if ($parts.Count -ne 4) { throw "Expected 4 v0.3.2 source parts, found $($parts.Count)" }
           $b64 = ($parts | ForEach-Object { Get-Content $_.FullName -Raw }) -join ''
-          [IO.File]::WriteAllBytes('factory-source.zip', [Convert]::FromBase64String($b64))
-          Expand-Archive -Path 'factory-source.zip' -DestinationPath 'factory-src' -Force
-
-      - name: Apply ESP-IDF fix and stamp v0.3.2
-        shell: pwsh
-        run: |
-          git apply --check --directory=factory-src/VisionSen-Factory-PC-Tool-v0.3.0 .factory_patch/v0.3.1.patch
-          git apply --directory=factory-src/VisionSen-Factory-PC-Tool-v0.3.0 .factory_patch/v0.3.1.patch
-          @'
-          from pathlib import Path
-          p = Path(r'factory-src/VisionSen-Factory-PC-Tool-v0.3.0/visionsen_factory_tool.py')
-          s = p.read_text(encoding='utf-8')
-          s = s.replace('APP_VERSION = "0.3.1"', 'APP_VERSION = "0.3.2"', 1)
-          s = s.replace('APP_VERSION = "0.3.2"\n', 'APP_VERSION = "0.3.2"\nBUILD_MARKER = "idf-env2-fullsource"\n', 1)
-          s = s.replace('Bu Factory Tool v0.3.1,', 'Bu Factory Tool v0.3.2,')
-          s = s.replace('self.title(f"{APP_NAME} v{APP_VERSION}")', 'self.title(f"{APP_NAME} v{APP_VERSION} [{BUILD_MARKER}]")', 1)
-          s = s.replace('ttk.Label(footer, text=f"v{APP_VERSION}").pack(side="right")', 'ttk.Label(footer, text=f"v{APP_VERSION} · {BUILD_MARKER}").pack(side="right")', 1)
-          needle = '"ESP-IDF ortamı hazırlanamadı (export.bat başarısız).\\n"\n'
-          replacement = '"ESP-IDF ortamı hazırlanamadı (export.bat başarısız).\\n"\n                    f"Factory Tool: v{APP_VERSION} / {BUILD_MARKER}\\n"\n'
-          if needle not in s:
-              raise SystemExit('Expected ESP-IDF error block not found')
-          s = s.replace(needle, replacement, 1)
-          p.write_text(s, encoding='utf-8')
-          '@ | Set-Content -Path stamp_v032.py -Encoding UTF8
-          python stamp_v032.py
-          python -m py_compile factory-src/VisionSen-Factory-PC-Tool-v0.3.0/visionsen_factory_tool.py
+          [IO.File]::WriteAllBytes('factory-v032-source.zip', [Convert]::FromBase64String($b64))
+          $hash = (Get-FileHash 'factory-v032-source.zip' -Algorithm SHA256).Hash.ToLower()
+          if ($hash -ne 'fb0ee127fb1b92a64208bd1dc55d0e95284ebb2b0bf342d526430b968b3f4a49') { throw "Source ZIP hash mismatch: $hash" }
+          Expand-Archive -Path 'factory-v032-source.zip' -DestinationPath 'factory-src' -Force
 
       - name: Assert exact v0.3.2 source before packaging
         shell: pwsh
         run: |
           @'
           from pathlib import Path
-          p = Path(r'factory-src/VisionSen-Factory-PC-Tool-v0.3.0/visionsen_factory_tool.py')
+          p = Path(r'factory-src/VisionSen-Factory-PC-Tool-v0.3.2/visionsen_factory_tool.py')
           s = p.read_text(encoding='utf-8')
           required = [
               'APP_VERSION = "0.3.2"',
@@ -84,6 +61,7 @@ jobs:
           present_forbidden = [x for x in forbidden if x in s]
           if missing or present_forbidden:
               raise SystemExit(f'SOURCE ASSERT FAILED missing={missing} forbidden_present={present_forbidden}')
+          compile(s, str(p), 'exec')
           print('SOURCE ASSERT PASS: v0.3.2 idf-env2-fullsource')
           '@ | Set-Content -Path assert_v032.py -Encoding UTF8
           python assert_v032.py
@@ -91,19 +69,19 @@ jobs:
       - name: Install dependencies
         shell: pwsh
         run: |
-          $src = Get-ChildItem 'factory-src' -Directory | Select-Object -First 1
+          $src = 'factory-src/VisionSen-Factory-PC-Tool-v0.3.2'
           python -m pip install --upgrade pip
-          python -m pip install -r (Join-Path $src.FullName 'requirements.txt')
+          python -m pip install -r (Join-Path $src 'requirements.txt')
           python -m pip install pyinstaller
 
-      - name: Build EXE
+      - name: Build EXE from asserted source
         shell: pwsh
         run: |
-          $src = Get-ChildItem 'factory-src' -Directory | Select-Object -First 1
-          Push-Location $src.FullName
+          $src = 'factory-src/VisionSen-Factory-PC-Tool-v0.3.2'
+          Push-Location $src
           python -m PyInstaller --noconfirm --clean --onefile --windowed --name VisionSen-Factory-PC-Tool visionsen_factory_tool.py
           Pop-Location
-          $exe = Join-Path $src.FullName 'dist/VisionSen-Factory-PC-Tool.exe'
+          $exe = Join-Path $src 'dist/VisionSen-Factory-PC-Tool.exe'
           if (!(Test-Path $exe)) { throw 'EXE output not found' }
           Copy-Item $exe 'VisionSen-Factory-PC-Tool-v0.3.2.exe'
           Get-FileHash 'VisionSen-Factory-PC-Tool-v0.3.2.exe' -Algorithm SHA256 | Format-List
