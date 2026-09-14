@@ -1,0 +1,188 @@
+name: Build VisionSen Mobile v1.6.14+32 Auto Device
+
+on:
+  push:
+    branches:
+      - mobile-v1.6.14-32
+    paths:
+      - '.github/workflows/build-mobile-v1614-32-auto-device.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  build-android:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Restore verified v1.6.13+31 source
+        uses: actions/download-artifact@v4
+        with:
+          name: VisionSen-Mobile-v1.6.13+31-Single-Secure-APK
+          path: previous
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          run-id: 34905027112
+
+      - name: Apply v1.6.14+32 automatic device registration
+        run: |
+          set -euo pipefail
+          rm -rf source-stage
+          mkdir -p source-stage
+          unzip -q 'previous/VisionSen-Mobile-v1.6.13+31-source.zip' -d source-stage
+          rm -rf lib test tool pubspec.yaml README.md
+          cp -a source-stage/artifact-source/lib .
+          cp -a source-stage/artifact-source/test .
+          cp -a source-stage/artifact-source/tool .
+          cp source-stage/artifact-source/pubspec.yaml .
+          cp source-stage/artifact-source/README.md .
+
+          python3 - <<'PY'
+          from pathlib import Path
+
+          p=Path('pubspec.yaml')
+          s=p.read_text(encoding='utf-8')
+          assert 'version: 1.6.13+31' in s
+          p.write_text(s.replace('version: 1.6.13+31','version: 1.6.14+32',1),encoding='utf-8')
+
+          p=Path('lib/services/mobile_api_service.dart')
+          s=p.read_text(encoding='utf-8')
+          anchor='  Future<Map<String, dynamic>> provisioningStatus(String serial) async {\n'
+          assert anchor in s
+          method='''  Future<Map<String, dynamic>> provisioningDeviceUpsert({\n    required String serial,\n    required String name,\n    required int locationId,\n    required int sendIntervalMinutes,\n    required String firmwareVersion,\n    required String deviceType,\n  }) {\n    return _write('POST', '/mobile/provisioning/device', {\n      'serial': serial,\n      'name': name,\n      'location_id': locationId,\n      'send_interval_minutes': sendIntervalMinutes,\n      'firmware_version': firmwareVersion,\n      'device_type': deviceType,\n    });\n  }\n\n'''
+          s=s.replace(anchor,method+anchor,1)
+          p.write_text(s,encoding='utf-8')
+
+          p=Path('lib/services/app_session.dart')
+          s=p.read_text(encoding='utf-8')
+          old='''  Map<String, dynamic>? findDeviceBySerial(String serial) {\n    final wanted = serial.trim().toUpperCase();\n    for (final device in devices) {\n      final code = device['code']?.toString().trim().toUpperCase() ?? '';\n      if (code == wanted) return device;\n    }\n    return null;\n  }\n'''
+          new='''  Map<String, dynamic>? findDeviceBySerial(String serial) {\n    final wanted = serial.trim().toUpperCase();\n    for (final device in devices) {\n      final identity =\n          device['serial_identity']?.toString().trim().toUpperCase() ?? '';\n      final code = device['code']?.toString().trim().toUpperCase() ?? '';\n      if (identity == wanted || code == wanted) return device;\n    }\n    return null;\n  }\n\n  Future<Map<String, dynamic>?> upsertProvisionedDevice({\n    required String serial,\n    required String name,\n    required int locationId,\n    required int sendIntervalMinutes,\n    required String firmwareVersion,\n    required String deviceType,\n  }) async {\n    if (!authenticated || !canManage) {\n      error = 'Cihaz kaydı için firma yöneticisi oturumu gerekir.';\n      notifyListeners();\n      return null;\n    }\n    try {\n      final result = await api.provisioningDeviceUpsert(\n        serial: serial,\n        name: name,\n        locationId: locationId,\n        sendIntervalMinutes: sendIntervalMinutes,\n        firmwareVersion: firmwareVersion,\n        deviceType: deviceType,\n      );\n      error = null;\n      try {\n        bundle = await api.bundle();\n        await _persistBundle();\n      } catch (_) {}\n      notifyListeners();\n      return result;\n    } on MobileApiException catch (e) {\n      error = e.message;\n      notifyListeners();\n      return null;\n    } catch (_) {\n      error = 'Cihaz web hesabına kaydedilemedi. İnternet bağlantısını kontrol edin.';\n      notifyListeners();\n      return null;\n    }\n  }\n'''
+          assert old in s
+          s=s.replace(old,new,1)
+          p.write_text(s,encoding='utf-8')
+
+          p=Path('lib/screens/wifi_provision_screen.dart')
+          s=p.read_text(encoding='utf-8')
+          assert 'Mobil v1.6.13+31' in s
+          old='''  bool _cloudOnline = false;\n  bool _registeredForCompany = false;\n  double _progress = 0;\n'''
+          new='''  bool _cloudOnline = false;\n  bool _registeredForCompany = false;\n  bool _webRegistrationPending = false;\n  int? _selectedLocationId;\n  Map<String, dynamic>? _lastProvisionDeviceInfo;\n  double _progress = 0;\n'''
+          assert old in s
+          s=s.replace(old,new,1)
+
+          anchor='  bool get _connected => _provision.isConnected;\n'
+          helpers='''  bool get _connected => _provision.isConnected;\n\n  List<Map<String, dynamic>> get _provisionLocations => widget.session.locations\n      .where((item) => item['type'] == 'room' || item['type'] == 'cabinet')\n      .toList();\n\n  String _maskedCompanyKey() {\n    final key = _bootstrap?['device_secret_key']?.toString() ?? '';\n    if (key.isEmpty) return '—';\n    final tail = key.length <= 4 ? key : key.substring(key.length - 4);\n    return '••••••••••••$tail';\n  }\n\n  String _bootstrapCompanyName() {\n    final short = _bootstrap?['company_short_name']?.toString().trim() ?? '';\n    if (short.isNotEmpty) return short;\n    final name = _bootstrap?['company_name']?.toString().trim() ?? '';\n    return name.isNotEmpty ? name : (widget.session.company['name']?.toString() ?? '—');\n  }\n'''
+          assert anchor in s
+          s=s.replace(anchor,helpers,1)
+
+          old='''    await widget.session.refresh();\n    final registered = widget.session.findDeviceBySerial(serial) != null;\n    if (!mounted) return;\n    setState(() {\n      _busy = false;\n      _deviceInfo = info;\n      _verifiedSerial = serial;\n      _registeredForCompany = registered;\n      _connectingSsid = null;\n    });\n    _setProgress(55, registered ? 'Cihaz doğrulandı' : 'Cihaz web kaydı bekliyor');\n    if (!registered) {\n      _setMessage(\n        '$serial bu firma hesabında kayıtlı değil. Önce Cihazlar bölümünden cihazı etiketteki aynı seri numarasıyla ekleyin, sonra kurulumu tekrar başlatın.',\n        error: true,\n      );\n    } else {\n      _setMessage(\n        configured\n            ? 'Cihaz daha önce yapılandırılmış. Aynı firma hesabıyla yeniden yapılandırma yapılabilir.'\n            : 'Cihaz doğrulandı. Yalnız Wi-Fi bilgilerini girin; sunucu ve firma ayarları otomatik uygulanacak.',\n      );\n    }\n'''
+          new='''    await widget.session.refresh();\n    final registeredDevice = widget.session.findDeviceBySerial(serial);\n    final registered = registeredDevice != null;\n    final registeredName = registeredDevice?['name']?.toString().trim() ?? '';\n    if (registeredName.isNotEmpty) _deviceName.text = registeredName;\n    final registeredLocation = int.tryParse('${registeredDevice?['location_id'] ?? ''}');\n    final validLocationIds = _provisionLocations\n        .map((item) => int.tryParse('${item['id']}'))\n        .whereType<int>()\n        .toSet();\n    var selectedLocation =\n        registeredLocation != null && validLocationIds.contains(registeredLocation)\n            ? registeredLocation\n            : null;\n    if (selectedLocation == null && _provisionLocations.length == 1) {\n      selectedLocation = int.tryParse('${_provisionLocations.first['id']}');\n    }\n    if (!mounted) return;\n    setState(() {\n      _busy = false;\n      _deviceInfo = info;\n      _lastProvisionDeviceInfo = Map<String, dynamic>.from(info);\n      _verifiedSerial = serial;\n      _registeredForCompany = registered;\n      _webRegistrationPending = false;\n      _selectedLocationId = selectedLocation;\n      _connectingSsid = null;\n    });\n    _setProgress(55, registered ? 'Cihaz doğrulandı' : 'Yeni cihaz kaydı hazırlanıyor');\n    _setMessage(\n      registered\n          ? (configured\n              ? 'Cihaz daha önce kayıtlı ve yapılandırılmış. Cihazı Yapılandır dediğinizde web kaydı da güncellenecek.'\n              : 'Cihaz kayıtlı. Cihazı Yapılandır dediğinizde güncel cihaz bilgileri web hesabına yazılacak.')\n          : '$serial bu firma hesabında henüz kayıtlı değil. Cihazı Yapılandır dediğinizde Cihazlarım bölümüne otomatik eklenecek.',\n    );\n'''
+          assert old in s
+          s=s.replace(old,new,1)
+
+          old='''  Future<void> _save() async {\n    if (_busy || !_connected) return;\n    if (!_registeredForCompany) {\n      _setMessage('Bu cihaz firma hesabında kayıtlı olmadan yapılandırma tamamlanamaz.', error: true);\n      return;\n    }\n    final validation = _prepareConfig();\n'''
+          new='''  Future<void> _save() async {\n    if (_busy || !_connected) return;\n    if (_selectedLocationId == null) {\n      _setMessage(\n        _provisionLocations.isEmpty\n            ? 'Cihazı kaydetmek için önce Binalar bölümünde bir oda veya dolap oluşturun.'\n            : 'Cihazın kurulacağı oda veya dolabı seçin.',\n        error: true,\n      );\n      return;\n    }\n    final validation = _prepareConfig();\n'''
+          assert old in s
+          s=s.replace(old,new,1)
+
+          old='''    _setProgress(82, 'Ayarlar kaydedildi, cihaz yeniden başlıyor');\n    await _provision.disconnect();\n    if (!mounted) return;\n\n    final serial = _verifiedSerial ?? '';\n    setState(() {\n      _saved = true;\n      _deviceInfo = null;\n      _foundDevices = const [];\n      _connectingSsid = null;\n    });\n    await _waitForCloud(serial);\n  }\n'''
+          new='''    final serial = _verifiedSerial ?? '';\n    final provisionInfo = Map<String, dynamic>.from(_deviceInfo ?? const {});\n    _lastProvisionDeviceInfo = provisionInfo;\n    _setProgress(80, 'Ayarlar kaydedildi, cihaz yeniden başlıyor');\n    await _provision.disconnect();\n    if (!mounted) return;\n\n    setState(() {\n      _saved = true;\n      _deviceInfo = null;\n      _foundDevices = const [];\n      _connectingSsid = null;\n    });\n\n    final webSaved = await _syncWebDevice(serial, provisionInfo);\n    if (!webSaved) return;\n    await _waitForCloud(serial);\n  }\n\n  Future<bool> _syncWebDevice(\n    String serial,\n    Map<String, dynamic> provisionInfo,\n  ) async {\n    final locationId = _selectedLocationId;\n    if (serial.isEmpty || locationId == null) {\n      if (mounted) setState(() => _busy = false);\n      _setMessage('Cihaz web kaydı için seri numarası veya konum eksik.', error: true);\n      return false;\n    }\n    _setProgress(86, _registeredForCompany ? 'Cihaz kaydı güncelleniyor' : 'Cihaz Cihazlarım bölümüne ekleniyor');\n    Map<String, dynamic>? result;\n    for (var attempt = 0; attempt < 3 && result == null; attempt++) {\n      if (attempt > 0) await Future<void>.delayed(Duration(milliseconds: 900 * attempt));\n      result = await widget.session.upsertProvisionedDevice(\n        serial: serial,\n        name: _deviceName.text.trim(),\n        locationId: locationId,\n        sendIntervalMinutes: _sendInterval,\n        firmwareVersion: provisionInfo['fw']?.toString().trim() ?? '',\n        deviceType: provisionInfo['device_type']?.toString().trim() ?? '',\n      );\n    }\n    if (!mounted) return false;\n    if (result == null) {\n      setState(() {\n        _busy = false;\n        _webRegistrationPending = true;\n      });\n      _setProgress(86, 'Cihaz ayarlandı • web kaydı bekliyor');\n      _setMessage(\n        'Cihazın Wi-Fi ayarları kaydedildi ancak Cihazlarım kaydı tamamlanamadı. ${widget.session.error ?? 'İnternet bağlantısını kontrol edip tekrar deneyin.'}',\n        error: true,\n      );\n      return false;\n    }\n    setState(() {\n      _registeredForCompany = true;\n      _webRegistrationPending = false;\n    });\n    final action = result['action']?.toString();\n    _setProgress(90, action == 'created' ? 'Cihaz Cihazlarım bölümüne eklendi' : 'Cihaz kaydı güncellendi');\n    return true;\n  }\n\n  Future<void> _retryWebRegistration() async {\n    if (_busy || !_webRegistrationPending) return;\n    final serial = _verifiedSerial ?? '';\n    final info = _lastProvisionDeviceInfo ?? const <String, dynamic>{};\n    setState(() {\n      _busy = true;\n      _message = null;\n      _messageIsError = false;\n    });\n    final ok = await _syncWebDevice(serial, info);\n    if (ok) await _waitForCloud(serial);\n  }\n'''
+          assert old in s
+          s=s.replace(old,new,1)
+
+          old='''                      DropdownButtonFormField<int>(\n                        value: _sendInterval,\n                        decoration: _decoration('Gönderim aralığı', Icons.schedule_send_outlined),\n                        items: DeviceConfig.supportedSendIntervals\n                            .map((m) => DropdownMenuItem<int>(value: m, child: Text('$m dakika')))\n                            .toList(),\n                        onChanged: _busy ? null : (value) {\n                          if (value != null) setState(() => _sendInterval = value);\n                        },\n                      ),\n                      const SizedBox(height: 12),\n                      const Row(\n                        children: [\n                          Icon(Icons.lock_outline, size: 16, color: AppTheme.green),\n                          SizedBox(width: 6),\n                          Expanded(\n                            child: Text(\n                              'Sunucu adresi ve firma anahtarı giriş yaptığınız hesaptan otomatik alınır ve ekranda gösterilmez.',\n                              style: TextStyle(color: AppTheme.muted, fontSize: 10.5, height: 1.35),\n                            ),\n                          ),\n                        ],\n                      ),\n'''
+          new='''                      DropdownButtonFormField<int>(\n                        value: _sendInterval,\n                        decoration: _decoration('Gönderim aralığı', Icons.schedule_send_outlined),\n                        items: DeviceConfig.supportedSendIntervals\n                            .map((m) => DropdownMenuItem<int>(value: m, child: Text('$m dakika')))\n                            .toList(),\n                        onChanged: _busy ? null : (value) {\n                          if (value != null) setState(() => _sendInterval = value);\n                        },\n                      ),\n                      const SizedBox(height: 12),\n                      DropdownButtonFormField<int>(\n                        value: _selectedLocationId,\n                        isExpanded: true,\n                        decoration: _decoration('Cihaz konumu', Icons.place_outlined),\n                        hint: const Text('Oda veya dolap seçin'),\n                        items: _provisionLocations\n                            .map((item) => DropdownMenuItem<int>(\n                                  value: int.tryParse('${item['id']}'),\n                                  child: Text(\n                                    locationPath(widget.session.locations, item['id']),\n                                    overflow: TextOverflow.ellipsis,\n                                  ),\n                                ))\n                            .where((item) => item.value != null)\n                            .toList(),\n                        onChanged: _busy ? null : (value) => setState(() => _selectedLocationId = value),\n                      ),\n                      const SizedBox(height: 12),\n                      Container(\n                        width: double.infinity,\n                        padding: const EdgeInsets.all(12),\n                        decoration: BoxDecoration(\n                          color: AppTheme.cyan.withOpacity(.05),\n                          borderRadius: BorderRadius.circular(12),\n                          border: Border.all(color: AppTheme.cyan.withOpacity(.18)),\n                        ),\n                        child: Column(\n                          crossAxisAlignment: CrossAxisAlignment.start,\n                          children: [\n                            const Text('Uygulanacak teknik ayarlar', style: TextStyle(fontWeight: FontWeight.w900)),\n                            const SizedBox(height: 8),\n                            Text('Sunucu: ${_bootstrap?['server_url'] ?? '—'}', style: const TextStyle(fontSize: 10.5, color: AppTheme.muted)),\n                            const SizedBox(height: 4),\n                            Text('Firma: ${_bootstrapCompanyName()}', style: const TextStyle(fontSize: 10.5, color: AppTheme.muted)),\n                            const SizedBox(height: 4),\n                            Text('Firma anahtarı: ${_maskedCompanyKey()}', style: const TextStyle(fontSize: 10.5, color: AppTheme.muted)),\n                            const SizedBox(height: 7),\n                            const Row(\n                              children: [\n                                Icon(Icons.lock_outline, size: 15, color: AppTheme.green),\n                                SizedBox(width: 5),\n                                Expanded(\n                                  child: Text(\n                                    'Bu alanlar salt okunurdur; firma anahtarının tamamı ekranda gösterilmez.',\n                                    style: TextStyle(color: AppTheme.green, fontSize: 10, height: 1.3),\n                                  ),\n                                ),\n                              ],\n                            ),\n                          ],\n                        ),\n                      ),\n'''
+          assert old in s
+          s=s.replace(old,new,1)
+          s=s.replace("onPressed: _busy || !_registeredForCompany ? null : _save,","onPressed: _busy ? null : _save,",1)
+
+          anchor="""                SecondaryButton(\n                  text: 'BAŞKA CİHAZ YAPILANDIR',\n"""
+          retry="""                if (_webRegistrationPending) ...[\n                  SecondaryButton(\n                    text: 'WEB KAYDINI TEKRAR DENE',\n                    onPressed: _busy ? null : _retryWebRegistration,\n                  ),\n                  const SizedBox(height: 10),\n                ],\n                SecondaryButton(\n                  text: 'BAŞKA CİHAZ YAPILANDIR',\n"""
+          assert anchor in s
+          s=s.replace(anchor,retry,1)
+          old="""                            _registeredForCompany = false;\n                            _deviceInfo = null;\n                            _config.deviceAlreadyConfigured = false;\n"""
+          new="""                            _registeredForCompany = false;\n                            _webRegistrationPending = false;\n                            _selectedLocationId = null;\n                            _lastProvisionDeviceInfo = null;\n                            _deviceInfo = null;\n                            _config.deviceAlreadyConfigured = false;\n"""
+          assert old in s
+          s=s.replace(old,new,1)
+          s=s.replace('Mobil v1.6.13+31 • QR-first provisioning • 8 karakter cihaz kodu • tek APK','Mobil v1.6.14+32 • otomatik Cihazlarım kaydı • güvenli provisioning • tek APK',1)
+          p.write_text(s,encoding='utf-8')
+
+          p=Path('README.md')
+          s=p.read_text(encoding='utf-8').replace('1.6.13+31','1.6.14+32')
+          s += '''\n\n## v1.6.14+32\n- Provisioning ekranında server URL, firma ve maskeli firma anahtarı salt okunur gösterilir.\n- Cihazı Yapılandır sonrası cihaz seri numarasıyla web tarafında otomatik oluşturulur/güncellenir.\n- Yeni cihaz için oda/dolap konumu seçimi zorunludur.\n'''
+          p.write_text(s,encoding='utf-8')
+          PY
+
+      - name: Assert v1.6.14+32 contract
+        run: |
+          set -euo pipefail
+          grep -q 'version: 1.6.14+32' pubspec.yaml
+          grep -q "'/mobile/provisioning/device'" lib/services/mobile_api_service.dart
+          grep -q 'Uygulanacak teknik ayarlar' lib/screens/wifi_provision_screen.dart
+          grep -q 'WEB KAYDINI TEKRAR DENE' lib/screens/wifi_provision_screen.dart
+          grep -q 'Mobil v1.6.14+32' lib/screens/wifi_provision_screen.dart
+
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.24.0'
+          channel: stable
+          cache: true
+
+      - name: Prepare Android platform
+        run: bash tool/bootstrap_android_v169.sh
+
+      - name: Enable unbundled ML Kit barcode model
+        run: |
+          set -euo pipefail
+          PROP='dev.steenbakker.mobile_scanner.useUnbundled=true'
+          if grep -q '^dev.steenbakker.mobile_scanner.useUnbundled=' android/gradle.properties; then
+            sed -i 's/^dev\.steenbakker\.mobile_scanner\.useUnbundled=.*/dev.steenbakker.mobile_scanner.useUnbundled=true/' android/gradle.properties
+          else
+            printf '\n%s\n' "$PROP" >> android/gradle.properties
+          fi
+
+      - name: Install dependencies
+        run: flutter pub get
+
+      - name: Static analysis
+        run: flutter analyze --no-fatal-warnings
+
+      - name: Unit tests
+        run: flutter test
+
+      - name: Build single phone APK
+        run: flutter build apk --release --target-platform android-arm,android-arm64
+
+      - name: Package APK and source
+        run: |
+          set -euo pipefail
+          mkdir -p out artifact-source
+          cp build/app/outputs/flutter-apk/app-release.apk 'out/VisionSen-Mobile-v1.6.14+32.apk'
+          if unzip -l 'out/VisionSen-Mobile-v1.6.14+32.apk' | grep -q 'libbarhopper'; then
+            echo 'Bundled ML Kit libbarhopper still present; optimization failed.' >&2
+            exit 1
+          fi
+          cp pubspec.yaml README.md artifact-source/
+          cp -R lib test tool artifact-source/
+          cp android/gradle.properties artifact-source/android-gradle.properties
+          zip -qr 'out/VisionSen-Mobile-v1.6.14+32-source.zip' artifact-source
+          sha256sum 'out/VisionSen-Mobile-v1.6.14+32.apk' > 'out/VisionSen-Mobile-v1.6.14+32-SHA256.txt'
+          stat -c '%n %s bytes' out/*.apk | tee 'out/VisionSen-Mobile-v1.6.14+32-SIZE.txt'
+
+      - name: Upload single APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: VisionSen-Mobile-v1.6.14+32-Auto-Device
+          path: out/
+          if-no-files-found: error
+          retention-days: 30
