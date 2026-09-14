@@ -46,9 +46,9 @@ jobs:
               'company registration gate': ('_registeredForCompany', screen),
               'serial verification': ('serial_locked', screen),
               'factory auth': ('factory_secret', screen),
-              'qr parser': ('parseProvisioningQr', svc),
+              'qr parser': ('ProvisioningQrData.tryParse', svc),
               'scanner screen': ('MobileScanner', qr),
-              '8-char tests': ('ABCDEFGH', tests),
+              '8-char tests': ('7K4P92XZ', tests),
           }
           missing = [name for name, (needle, text) in required.items() if needle not in text]
           if missing:
