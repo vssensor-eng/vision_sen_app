@@ -26,5 +26,34 @@ elif new not in s:
     raise SystemExit('mounted lifecycle guard patch target missing')
 p.write_text(s, encoding='utf-8')
 
+# mobile_scanner 6.x resolves Kotlin 2.1 metadata; Flutter 3.24 template still pins an older Kotlin compiler.
+# Patch the generated Android project after bootstrap so release builds use a compatible Kotlin Gradle plugin.
+p = Path('tool/bootstrap_android_v169.sh')
+b = p.read_text(encoding='utf-8')
+marker = '# VisionSen Kotlin 2.1 compatibility patch'
+if marker not in b:
+    b += r'''
+
+# VisionSen Kotlin 2.1 compatibility patch
+python3 - <<'PYKOTLIN'
+from pathlib import Path
+import re
+p = Path('android/settings.gradle')
+s = p.read_text(encoding='utf-8')
+s2, count = re.subn(
+    r'(id\s+["\']org\.jetbrains\.kotlin\.android["\']\s+version\s+["\'])[^"\']+(["\']\s+apply\s+false)',
+    r'\g<1>2.1.0\g<2>',
+    s,
+    count=1,
+)
+if count != 1:
+    raise SystemExit('Kotlin Gradle plugin version target missing in android/settings.gradle')
+p.write_text(s2, encoding='utf-8')
+print('Android Kotlin Gradle plugin set to 2.1.0')
+PYKOTLIN
+'''
+    p.write_text(b, encoding='utf-8')
+
 print(f'VisionSen mobile v1.6.9 payload applied, sha256={actual}')
 print('Applied mounted lifecycle guard before QR navigation')
+print('Prepared Kotlin 2.1 Android build compatibility patch')
