@@ -1,11 +1,12 @@
-name: Build VisionSen Factory PC Tool v0.3.2
+name: Build VisionSen Factory PC Tool v0.3.3
 
 on:
   push:
     branches:
-      - factory-pc-tool-v0.3.2
+      - factory-pc-tool-v0.3.3
     paths:
       - '.factory_v032/**'
+      - '.factory_patch/v0.3.3.patch'
       - '.github/workflows/build-factory-pc-tool.yml'
   workflow_dispatch:
 
@@ -26,18 +27,30 @@ jobs:
         with:
           python-version: '3.13'
 
-      - name: Restore exact v0.3.2 full source
+      - name: Restore exact v0.3.2 base source
         shell: pwsh
         run: |
+          $ErrorActionPreference = 'Stop'
           $parts = Get-ChildItem '.factory_v032/part*.txt' | Sort-Object Name
           if ($parts.Count -ne 4) { throw "Expected 4 v0.3.2 source parts, found $($parts.Count)" }
           $b64 = ($parts | ForEach-Object { Get-Content $_.FullName -Raw }) -join ''
           [IO.File]::WriteAllBytes('factory-v032-source.zip', [Convert]::FromBase64String($b64))
           $hash = (Get-FileHash 'factory-v032-source.zip' -Algorithm SHA256).Hash.ToLower()
-          if ($hash -ne 'fb0ee127fb1b92a64208bd1dc55d0e95284ebb2b0bf342d526430b968b3f4a49') { throw "Source ZIP hash mismatch: $hash" }
+          if ($hash -ne 'fb0ee127fb1b92a64208bd1dc55d0e95284ebb2b0bf342d526430b968b3f4a49') { throw "Base source ZIP hash mismatch: $hash" }
           Expand-Archive -Path 'factory-v032-source.zip' -DestinationPath 'factory-src' -Force
 
-      - name: Assert exact v0.3.2 source before packaging
+      - name: Apply v0.3.3 cwd-call fix
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          Push-Location 'factory-src/VisionSen-Factory-PC-Tool-v0.3.2'
+          git apply --check '../../../.factory_patch/v0.3.3.patch'
+          if ($LASTEXITCODE -ne 0) { throw "git apply --check failed with exit code $LASTEXITCODE" }
+          git apply '../../../.factory_patch/v0.3.3.patch'
+          if ($LASTEXITCODE -ne 0) { throw "git apply failed with exit code $LASTEXITCODE" }
+          Pop-Location
+
+      - name: Assert exact v0.3.3 source before packaging
         shell: pwsh
         run: |
           @'
@@ -45,26 +58,28 @@ jobs:
           p = Path(r'factory-src/VisionSen-Factory-PC-Tool-v0.3.2/visionsen_factory_tool.py')
           s = p.read_text(encoding='utf-8')
           required = [
-              'APP_VERSION = "0.3.2"',
-              'BUILD_MARKER = "idf-env2-fullsource"',
-              'IDF_TOOLS_PATH:',
-              'Factory Tool: v{APP_VERSION} / {BUILD_MARKER}',
+              'APP_VERSION = "0.3.3"',
+              'BUILD_MARKER = "idf-cwd-call"',
+              "command = f'call export.bat && echo {sentinel} && set'",
+              '["cmd.exe", "/d", "/c", command]',
+              'cwd=str(idf_path),',
               'env=env,',
-              'self.title(f"{APP_NAME} v{APP_VERSION} [{BUILD_MARKER}]")',
+              'Factory Tool: v{APP_VERSION} / {BUILD_MARKER}',
           ]
           forbidden = [
-              'ESP-IDF 6.1 kurulumunu ve Ayarlar > ESP-IDF Python yolunu kontrol edin.',
-              'APP_VERSION = "0.3.0"',
-              'APP_VERSION = "0.3.1"',
+              'APP_VERSION = "0.3.2"',
+              'BUILD_MARKER = "idf-env2-fullsource"',
+              '["cmd.exe", "/d", "/s", "/c", command]',
+              "command = f'call \"{export_bat}\" && echo {sentinel} && set'",
           ]
           missing = [x for x in required if x not in s]
           present_forbidden = [x for x in forbidden if x in s]
           if missing or present_forbidden:
               raise SystemExit(f'SOURCE ASSERT FAILED missing={missing} forbidden_present={present_forbidden}')
           compile(s, str(p), 'exec')
-          print('SOURCE ASSERT PASS: v0.3.2 idf-env2-fullsource')
-          '@ | Set-Content -Path assert_v032.py -Encoding UTF8
-          python assert_v032.py
+          print('SOURCE ASSERT PASS: v0.3.3 idf-cwd-call')
+          '@ | Set-Content -Path assert_v033.py -Encoding UTF8
+          python assert_v033.py
 
       - name: Install dependencies
         shell: pwsh
@@ -80,16 +95,17 @@ jobs:
           $src = 'factory-src/VisionSen-Factory-PC-Tool-v0.3.2'
           Push-Location $src
           python -m PyInstaller --noconfirm --clean --onefile --windowed --name VisionSen-Factory-PC-Tool visionsen_factory_tool.py
+          if ($LASTEXITCODE -ne 0) { throw "PyInstaller failed with exit code $LASTEXITCODE" }
           Pop-Location
           $exe = Join-Path $src 'dist/VisionSen-Factory-PC-Tool.exe'
           if (!(Test-Path $exe)) { throw 'EXE output not found' }
-          Copy-Item $exe 'VisionSen-Factory-PC-Tool-v0.3.2.exe'
-          Get-FileHash 'VisionSen-Factory-PC-Tool-v0.3.2.exe' -Algorithm SHA256 | Format-List
+          Copy-Item $exe 'VisionSen-Factory-PC-Tool-v0.3.3.exe'
+          Get-FileHash 'VisionSen-Factory-PC-Tool-v0.3.3.exe' -Algorithm SHA256 | Format-List
 
       - name: Upload Windows EXE
         uses: actions/upload-artifact@v4
         with:
-          name: VisionSen-Factory-PC-Tool-v0.3.2-Windows
-          path: VisionSen-Factory-PC-Tool-v0.3.2.exe
+          name: VisionSen-Factory-PC-Tool-v0.3.3-Windows
+          path: VisionSen-Factory-PC-Tool-v0.3.3.exe
           if-no-files-found: error
           retention-days: 30
