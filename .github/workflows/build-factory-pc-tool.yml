@@ -1,0 +1,67 @@
+name: Build VisionSen Factory PC Tool
+
+on:
+  push:
+    branches:
+      - factory-pc-tool-v0.3.0
+    paths:
+      - '.factory_source/**'
+      - '.github/workflows/build-factory-pc-tool.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-windows-exe:
+    runs-on: windows-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+          cache: 'pip'
+          cache-dependency-path: '**/requirements.txt'
+
+      - name: Restore source archive
+        shell: pwsh
+        run: |
+          $parts = Get-ChildItem '.factory_source/part*.txt' | Sort-Object Name
+          if ($parts.Count -ne 6) { throw "Expected 6 source archive parts, found $($parts.Count)" }
+          $b64 = ($parts | ForEach-Object { Get-Content $_.FullName -Raw }) -join ''
+          [IO.File]::WriteAllBytes('factory-source.zip', [Convert]::FromBase64String($b64))
+          Expand-Archive -Path 'factory-source.zip' -DestinationPath 'factory-src' -Force
+          Get-ChildItem 'factory-src' -Recurse | Select-Object FullName
+
+      - name: Install dependencies
+        shell: pwsh
+        run: |
+          $src = Get-ChildItem 'factory-src' -Directory | Select-Object -First 1
+          python -m pip install --upgrade pip
+          python -m pip install -r (Join-Path $src.FullName 'requirements.txt')
+          python -m pip install pyinstaller
+
+      - name: Build EXE
+        shell: pwsh
+        run: |
+          $src = Get-ChildItem 'factory-src' -Directory | Select-Object -First 1
+          Push-Location $src.FullName
+          python -m PyInstaller --noconfirm --clean --onefile --windowed --name VisionSen-Factory-PC-Tool visionsen_factory_tool.py
+          Pop-Location
+          $exe = Join-Path $src.FullName 'dist/VisionSen-Factory-PC-Tool.exe'
+          if (!(Test-Path $exe)) { throw 'EXE output not found' }
+          Copy-Item $exe 'VisionSen-Factory-PC-Tool-v0.3.0.exe'
+          Get-FileHash 'VisionSen-Factory-PC-Tool-v0.3.0.exe' -Algorithm SHA256 | Format-List
+
+      - name: Upload Windows EXE
+        uses: actions/upload-artifact@v4
+        with:
+          name: VisionSen-Factory-PC-Tool-v0.3.0-Windows
+          path: VisionSen-Factory-PC-Tool-v0.3.0.exe
+          if-no-files-found: error
+          retention-days: 30
