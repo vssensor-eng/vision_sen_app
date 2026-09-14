@@ -1,0 +1,150 @@
+name: Build VisionSen Mobile v1.6.12+30 Single APK
+
+on:
+  push:
+    branches:
+      - mobile-v1.6.12-30
+    paths:
+      - '.github/workflows/build-mobile-v1612-30-single-apk.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  build-android:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Restore verified v1.6.11+29 source
+        uses: actions/download-artifact@v4
+        with:
+          name: VisionSen-Mobile-v1.6.11+29-Session-Provisioning-Fix
+          path: previous
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          run-id: 34902874641
+
+      - name: Apply v1.6.12+30 bundle-first provisioning fix
+        run: |
+          set -euo pipefail
+          rm -rf source-stage
+          mkdir -p source-stage
+          unzip -q 'previous/VisionSen-Mobile-v1.6.11+29-source.zip' -d source-stage
+          rm -rf lib test tool pubspec.yaml README.md
+          cp -a source-stage/artifact-source/lib .
+          cp -a source-stage/artifact-source/test .
+          cp -a source-stage/artifact-source/tool .
+          cp source-stage/artifact-source/pubspec.yaml .
+          cp source-stage/artifact-source/README.md .
+
+          python3 - <<'PY'
+          from pathlib import Path
+
+          p=Path('pubspec.yaml')
+          s=p.read_text(encoding='utf-8')
+          if 'version: 1.6.11+29' not in s:
+              raise SystemExit('Expected v1.6.11+29 source version missing')
+          p.write_text(s.replace('version: 1.6.11+29','version: 1.6.12+30',1),encoding='utf-8')
+
+          p=Path('lib/screens/wifi_provision_screen.dart')
+          s=p.read_text(encoding='utf-8')
+          start=s.find('  Future<bool> _ensureProvisioningBootstrap() async {')
+          end=s.find('  Future<void> _scanQrAndConnect() async {',start)
+          if start < 0 or end < 0:
+              raise SystemExit('Provision bootstrap markers missing')
+          replacement='''  Future<bool> _ensureProvisioningBootstrap() async {\n    if (!widget.session.authenticated) {\n      _setMessage('Cihaz kurulumu için önce uygulamaya giriş yapın.', error: true);\n      return false;\n    }\n    if (!widget.session.canManage) {\n      _setMessage(\n        'Cihaz yapılandırması yalnız firma yöneticisi hesabıyla yapılabilir.',\n        error: true,\n      );\n      return false;\n    }\n    if (_bootstrap != null) return true;\n\n    bool applyBootstrap(Map<String, dynamic> data) {\n      final serverUrl = data['server_url']?.toString().trim() ?? '';\n      final companyKey = data['device_secret_key']?.toString().trim() ?? '';\n      final serverError = DeviceConfig.validateServerUrl(serverUrl);\n      final keyError = DeviceConfig.validateCompanyKey(companyKey);\n      if (serverError != null || keyError != null) return false;\n      _bootstrap = Map<String, dynamic>.from(data);\n      return true;\n    }\n\n    _setProgress(5, 'Sunucu yetkisi doğrulanıyor');\n\n    final bundled = widget.session.bundle['provisioning'];\n    if (bundled is Map) {\n      final data = Map<String, dynamic>.from(bundled);\n      if (applyBootstrap(data)) {\n        if (!mounted) return false;\n        setState(() {});\n        _setProgress(10, 'Sunucu ayarları hazır');\n        return true;\n      }\n    }\n\n    try {\n      final data = await widget.session.api.provisioningBootstrap();\n      if (!applyBootstrap(data)) {\n        throw const MobileApiException(\n          'Sunucudaki cihaz kurulum bilgileri eksik veya geçersiz.',\n        );\n      }\n      if (!mounted) return false;\n      setState(() {});\n      _setProgress(10, 'Sunucu ayarları hazır');\n      return true;\n    } on MobileApiException catch (e) {\n      _setProgress(0, 'Kurulum başlatılamadı');\n      if (e.statusCode == 401) {\n        _setMessage(\n          'Mobil oturum doğrulanamadı. Oturumunuz açık kalır; sunucu mobil provisioning yetkisini kontrol edin.',\n          error: true,\n        );\n      } else if (e.statusCode == 404) {\n        final detected = widget.session.bundle['plugin_version']?.toString().trim();\n        _setMessage(\n          detected == null || detected.isEmpty\n              ? 'Mobil provisioning bilgisi sunucuda bulunamadı. Web paketini v2.5.83 veya daha yeni sürüme güncelleyin.'\n              : 'Sunucuda Ortam İzleme v$detected çalışıyor. Mobil provisioning için v2.5.83 veya daha yeni sürüm gereklidir.',\n          error: true,\n        );\n      } else {\n        _setMessage(e.message, error: true);\n      }\n      return false;\n    } catch (_) {\n      _setProgress(0, 'Kurulum başlatılamadı');\n      _setMessage(\n        'Kurulum bilgileri sunucudan alınamadı. İnternet bağlantısını kontrol edin.',\n        error: true,\n      );\n      return false;\n    }\n  }\n\n'''
+          s=s[:start]+replacement+s[end:]
+          s=s.replace('Mobil v1.6.9+27 • QR-first provisioning • 8 karakter cihaz kodu • otomatik sunucu ayarları','Mobil v1.6.12+30 • QR-first provisioning • 8 karakter cihaz kodu • tek APK',1)
+          p.write_text(s,encoding='utf-8')
+
+          r=Path('README.md')
+          if r.exists():
+              t=r.read_text(encoding='utf-8').replace('1.6.11+29','1.6.12+30').replace('1.6.9+27','1.6.12+30')
+              r.write_text(t,encoding='utf-8')
+          PY
+
+      - name: Assert single-APK provisioning contract
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          pub=Path('pubspec.yaml').read_text(encoding='utf-8')
+          screen=Path('lib/screens/wifi_provision_screen.dart').read_text(encoding='utf-8')
+          session=Path('lib/services/app_session.dart').read_text(encoding='utf-8')
+          checks={
+            'version':('version: 1.6.12+30',pub),
+            'bundle provisioning':("widget.session.bundle['provisioning']",screen),
+            'endpoint fallback':('widget.session.api.provisioningBootstrap()',screen),
+            'remember token':('_storage.write(key: _tokenKey',session),
+            'new footer':('Mobil v1.6.12+30',screen),
+          }
+          missing=[k for k,(n,t) in checks.items() if n not in t]
+          if missing: raise SystemExit(f'contract assert failed: {missing}')
+          print('v1.6.12+30 contract ASSERT PASS')
+          PY
+
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.24.0'
+          channel: stable
+          cache: true
+
+      - name: Prepare Android platform
+        run: bash tool/bootstrap_android_v169.sh
+
+      - name: Enable unbundled ML Kit barcode model
+        run: |
+          set -euo pipefail
+          PROP='dev.steenbakker.mobile_scanner.useUnbundled=true'
+          if grep -q '^dev.steenbakker.mobile_scanner.useUnbundled=' android/gradle.properties; then
+            sed -i 's/^dev\.steenbakker\.mobile_scanner\.useUnbundled=.*/dev.steenbakker.mobile_scanner.useUnbundled=true/' android/gradle.properties
+          else
+            printf '\n%s\n' "$PROP" >> android/gradle.properties
+          fi
+
+      - name: Install dependencies
+        run: flutter pub get
+
+      - name: Static analysis
+        run: flutter analyze --no-fatal-warnings
+
+      - name: Unit tests
+        run: flutter test
+
+      - name: Build single phone APK
+        run: flutter build apk --release --target-platform android-arm,android-arm64
+
+      - name: Package APK and source
+        run: |
+          set -euo pipefail
+          mkdir -p out artifact-source
+          cp build/app/outputs/flutter-apk/app-release.apk 'out/VisionSen-Mobile-v1.6.12+30.apk'
+          if unzip -l 'out/VisionSen-Mobile-v1.6.12+30.apk' | grep -q 'libbarhopper'; then
+            echo 'Bundled ML Kit libbarhopper still present; optimization failed.' >&2
+            exit 1
+          fi
+          cp pubspec.yaml README.md artifact-source/
+          cp -R lib test tool artifact-source/
+          cp android/gradle.properties artifact-source/android-gradle.properties
+          zip -qr 'out/VisionSen-Mobile-v1.6.12+30-source.zip' artifact-source
+          sha256sum 'out/VisionSen-Mobile-v1.6.12+30.apk' > 'out/VisionSen-Mobile-v1.6.12+30-SHA256.txt'
+          stat -c '%n %s bytes' out/*.apk | tee 'out/VisionSen-Mobile-v1.6.12+30-SIZE.txt'
+
+      - name: Upload single APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: VisionSen-Mobile-v1.6.12+30-Single-APK
+          path: out/
+          if-no-files-found: error
+          retention-days: 30
