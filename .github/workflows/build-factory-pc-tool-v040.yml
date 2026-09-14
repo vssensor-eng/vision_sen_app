@@ -28,7 +28,7 @@ jobs:
           count=$(find .factory_v040_fw -maxdepth 1 -name 'part*.txt' | wc -l)
           test "$count" -eq 13
           cat .factory_v040_fw/part*.txt | base64 -d > fw217.tar.xz
-          echo "9bb61c0082330009024c4f900db6455185f2b5e21eb63de157858a5aa7b1285c  fw217.tar.xz" | sha256sum -c -
+          echo "8e5851db02bcf7c248df6844b435a6bf12550a2fad4e58d1bc7d7770a6659a73  fw217.tar.xz" | sha256sum -c -
           mkdir -p fwsrc
           tar -xJf fw217.tar.xz -C fwsrc
           test -f fwsrc/visionsen_oim3_idf_v2_1_7_qr_factory/CMakeLists.txt
