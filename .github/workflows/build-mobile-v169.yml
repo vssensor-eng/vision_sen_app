@@ -46,7 +46,7 @@ jobs:
               'company registration gate': ('_registeredForCompany', screen),
               'serial verification': ('serial_locked', screen),
               'factory auth': ('factory_secret', screen),
-              'qr parser': ('ProvisioningQrData.tryParse', svc),
+              'qr parser': ('static ProvisioningQrData? tryParse', svc),
               'scanner screen': ('MobileScanner', qr),
               '8-char tests': ('7K4P92XZ', tests),
           }
