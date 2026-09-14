@@ -1,0 +1,234 @@
+--- a/visionsen_factory_tool.py
++++ b/visionsen_factory_tool.py
+@@ -38,7 +38,7 @@
+     ImageTk = None
+ 
+ APP_NAME = "VisionSen Factory Tool"
+-APP_VERSION = "0.3.0"
++APP_VERSION = "0.3.1"
+ CONFIG_FILE = Path.home() / ".visionsen_factory_tool.json"
+ DEFAULT_REPORT = Path.home() / "VisionSenFactory" / "production_records.csv"
+ DEFAULT_LABEL_DIR = Path.home() / "VisionSenFactory" / "labels"
+@@ -129,6 +129,7 @@
+ class Settings:
+     idf_python: str = r"C:\Espressif\tools\python\v6.1\venv\Scripts\python.exe"
+     idf_path: str = r"C:\esp\v6.1\esp-idf"
++    idf_tools_path: str = r"C:\Espressif"
+     firmware_project: str = r"C:\ESP32\workspace\visionsen_oim3_idf_v2_1_7_qr_factory"
+     flash_baud: int = 460800
+     monitor_baud: int = 115200
+@@ -272,7 +273,7 @@
+         self.busy = False
+         self.last_result = TestResult()
+         self.last_log = ""
+-        self._idf_env_cache_key: tuple[str, str] | None = None
++        self._idf_env_cache_key: tuple[str, str, str] | None = None
+         self._idf_env_cache: dict[str, str] | None = None
+         self._monitor_serial = None
+         self._monitor_stop = threading.Event()
+@@ -458,18 +459,88 @@
+             cmake_text = ""
+         if 'set(PROJECT_VER "2.1.7")' not in cmake_text:
+             raise RuntimeError(
+-                "Bu Factory Tool v0.3.0, OIM3 firmware v2.1.7 QR Factory ile kullanılmalıdır.\n"
++                "Bu Factory Tool v0.3.1, OIM3 firmware v2.1.7 QR Factory ile kullanılmalıdır.\n"
+                 f"Seçili klasör: {p}\n\n"
+                 "Klasör adının v2_1_6 olması sorun değildir; ancak içindeki CMakeLists.txt PROJECT_VER=2.1.7 olmalıdır. "
+                 "Yeni firmware paketini bu klasöre çıkarın veya doğru v2.1.7 proje klasörünü seçin."
+             )
+         return p
+ 
++    def _idf_tools_candidates(self) -> list[Path]:
++        candidates: list[Path] = []
++
++        configured = str(getattr(self.settings, "idf_tools_path", "") or "").strip()
++        if configured:
++            candidates.append(Path(configured))
++
++        env_tools = os.environ.get("IDF_TOOLS_PATH", "").strip()
++        if env_tools:
++            candidates.append(Path(env_tools))
++
++        raw_python = str(self.settings.idf_python or "").strip()
++        if raw_python:
++            py = Path(raw_python)
++            for parent in py.parents:
++                if parent.name.lower() == "espressif":
++                    candidates.append(parent)
++                    break
++
++        if os.name == "nt":
++            candidates.append(Path(r"C:\Espressif"))
++            userprofile = os.environ.get("USERPROFILE", "").strip()
++            if userprofile:
++                candidates.append(Path(userprofile) / ".espressif")
++
++        unique: list[Path] = []
++        seen: set[str] = set()
++        for item in candidates:
++            key = str(item).lower()
++            if key not in seen:
++                seen.add(key)
++                unique.append(item)
++        return unique
++
++    def idf_tools_path(self) -> Path | None:
++        for path in self._idf_tools_candidates():
++            if path.is_dir():
++                return path
++        return None
++
+     def idf_python(self) -> Path:
+-        p = Path(self.settings.idf_python)
+-        if not p.is_file():
+-            raise RuntimeError(f"ESP-IDF Python bulunamadı: {p}")
+-        return p
++        configured = Path(self.settings.idf_python)
++        if configured.is_file():
++            return configured
++
++        # ESP-IDF Windows kurulumları sürüme göre iki farklı Python yerleşimi
++        # kullanabiliyor. Ayardaki yol eskiyse IDF_TOOLS_PATH altında otomatik bul.
++        patterns = (
++            "tools/python/*/venv/Scripts/python.exe",
++            "python_env/*/Scripts/python.exe",
++            "python_env/*/Scripts/python3.exe",
++        )
++        discovered: list[Path] = []
++        for tools in self._idf_tools_candidates():
++            if not tools.is_dir():
++                continue
++            for pattern in patterns:
++                discovered.extend(tools.glob(pattern))
++
++        discovered = [p for p in discovered if p.is_file()]
++        if discovered:
++            discovered.sort(key=lambda x: x.stat().st_mtime, reverse=True)
++            found = discovered[0]
++            self.settings.idf_python = str(found)
++            try:
++                self.settings.save()
++            except Exception:
++                pass
++            return found
++
++        raise RuntimeError(
++            "ESP-IDF Python bulunamadı.\n"
++            f"Ayardaki yol: {configured}\n\n"
++            "Ayarlar bölümünde ESP-IDF Python yolunu seçin veya IDF_TOOLS_PATH değerini kontrol edin."
++        )
+ 
+     @staticmethod
+     def _hidden_process_kwargs() -> dict:
+@@ -486,45 +557,76 @@
+     def idf_env(self) -> dict[str, str]:
+         idf_path = Path(self.settings.idf_path)
+         python_path = self.idf_python()
+-        cache_key = (str(idf_path), str(python_path))
++        tools_path = self.idf_tools_path()
++        cache_key = (str(idf_path), str(python_path), str(tools_path or ""))
+         if self._idf_env_cache_key == cache_key and self._idf_env_cache is not None:
+             return self._idf_env_cache.copy()
+ 
+         if not idf_path.is_dir():
+             raise RuntimeError(f"IDF_PATH bulunamadı: {idf_path}")
++
++        export_bat = idf_path / "export.bat"
++        if os.name == "nt" and not export_bat.is_file():
++            raise RuntimeError(f"ESP-IDF export.bat bulunamadı: {export_bat}")
++
+         env = os.environ.copy()
+         env["IDF_PATH"] = str(idf_path)
+         env["PYTHONUTF8"] = "1"
+         env["PYTHONIOENCODING"] = "utf-8"
+ 
+-        # ESP-IDF sadece IDF_PATH ile çalışmaz; export.bat CMake/Ninja/toolchain
+-        # yollarını ve ek ortam değişkenlerini hazırlar. GUI içinde bunu görünmez
+-        # bir cmd süreciyle bir kez yükleyip sonraki komutlarda aynı environment'ı kullanıyoruz.
++        # ESP-IDF Tools Installer genellikle araçları C:\Espressif altında tutar.
++        # export.bat bu değeri alamazsa varsayılan %USERPROFILE%\.espressif yoluna
++        # bakıp CMake/Ninja/toolchain/Python ortamını bulamayabilir.
++        if tools_path is not None:
++            env["IDF_TOOLS_PATH"] = str(tools_path)
++
++        # Kullanıcının seçtiği ESP-IDF Python venv'ini export.bat'e de bildir.
++        # python.exe ...\Scripts\python.exe biçimindeyse venv kökü Scripts'in üstüdür.
++        if python_path.parent.name.lower() == "scripts":
++            env["IDF_PYTHON_ENV_PATH"] = str(python_path.parent.parent)
++            env["PATH"] = str(python_path.parent) + os.pathsep + env.get("PATH", "")
++
+         if os.name == "nt":
+-            export_bat = idf_path / "export.bat"
+-            if not export_bat.is_file():
+-                raise RuntimeError(f"ESP-IDF export.bat bulunamadı: {export_bat}")
+-            command = f'call "{export_bat}" >nul 2>&1 && set'
++            # Aynı gizli cmd içinde export.bat'i CALL ile çalıştırıp sonrasında SET
++            # çıktısını alıyoruz. Kritik nokta: hazırladığımız env bu alt sürece
++            # gerçekten aktarılıyor (v0.3.0'da env=env eksikti).
++            sentinel = "__VISIONSEN_ENV_BEGIN__"
++            command = f'call "{export_bat}" && echo {sentinel} && set'
+             completed = subprocess.run(
+                 ["cmd.exe", "/d", "/s", "/c", command],
+-                capture_output=True,
++                env=env,
++                stdout=subprocess.PIPE,
++                stderr=subprocess.STDOUT,
+                 text=True,
+                 encoding="utf-8",
+                 errors="replace",
+                 **self._hidden_process_kwargs(),
+             )
++            output = completed.stdout or ""
+             if completed.returncode != 0:
++                lines = [line.rstrip() for line in output.splitlines() if line.strip()]
++                tail = "\n".join(lines[-24:])
++                details = f"\n\nESP-IDF çıktısı:\n{tail}" if tail else ""
+                 raise RuntimeError(
+                     "ESP-IDF ortamı hazırlanamadı (export.bat başarısız).\n"
+                     f"IDF_PATH: {idf_path}\n"
+-                    "ESP-IDF 6.1 kurulumunu ve Ayarlar > ESP-IDF Python yolunu kontrol edin."
++                    f"IDF_TOOLS_PATH: {tools_path or '(otomatik bulunamadı)'}\n"
++                    f"ESP-IDF Python: {python_path}"
++                    f"{details}\n\n"
++                    "Ayarlar bölümündeki yolları kontrol edin. ESP-IDF'yi yeniden kurmadan önce bu ayrıntılı çıktıyı kontrol edin."
+                 )
+-            for line in completed.stdout.splitlines():
++
++            env_text = output.split(sentinel, 1)[1] if sentinel in output else output
++            for line in env_text.splitlines():
+                 if "=" not in line:
+                     continue
+                 key, value = line.split("=", 1)
+-                if key:
++                key = key.strip()
++                if key and not key.startswith("["):
+                     env[key] = value
++
++            # export.bat bazı değişkenleri değiştirmiş olsa bile GUI çıktılarında
++            # UTF-8 tutarlılığını koru.
+             env["PYTHONUTF8"] = "1"
+             env["PYTHONIOENCODING"] = "utf-8"
+ 
+@@ -905,19 +1007,20 @@
+         vars_ = {
+             "idf_python": tk.StringVar(value=self.settings.idf_python),
+             "idf_path": tk.StringVar(value=self.settings.idf_path),
++            "idf_tools_path": tk.StringVar(value=getattr(self.settings, "idf_tools_path", r"C:\Espressif")),
+             "firmware_project": tk.StringVar(value=self.project_var.get()),
+             "flash_baud": tk.StringVar(value=str(self.settings.flash_baud)),
+             "monitor_baud": tk.StringVar(value=str(self.settings.monitor_baud)),
+             "test_seconds": tk.StringVar(value=str(self.settings.test_seconds)),
+             "report_csv": tk.StringVar(value=self.settings.report_csv),
+         }
+-        labels = [("idf_python", "ESP-IDF Python"), ("idf_path", "IDF_PATH"), ("firmware_project", "Firmware proje"), ("flash_baud", "Flash baud"), ("monitor_baud", "Monitor baud"), ("test_seconds", "Test süresi (sn)"), ("report_csv", "Üretim CSV")]
++        labels = [("idf_python", "ESP-IDF Python"), ("idf_path", "IDF_PATH"), ("idf_tools_path", "IDF_TOOLS_PATH"), ("firmware_project", "Firmware proje"), ("flash_baud", "Flash baud"), ("monitor_baud", "Monitor baud"), ("test_seconds", "Test süresi (sn)"), ("report_csv", "Üretim CSV")]
+         for i,(key,label) in enumerate(labels):
+             ttk.Label(frm,text=label).grid(row=i,column=0,sticky="w",pady=5)
+             ttk.Entry(frm,textvariable=vars_[key]).grid(row=i,column=1,sticky="ew",padx=8,pady=5)
+         def save():
+             try:
+-                self.settings.idf_python=vars_["idf_python"].get().strip(); self.settings.idf_path=vars_["idf_path"].get().strip(); self.settings.firmware_project=vars_["firmware_project"].get().strip()
++                self.settings.idf_python=vars_["idf_python"].get().strip(); self.settings.idf_path=vars_["idf_path"].get().strip(); self.settings.idf_tools_path=vars_["idf_tools_path"].get().strip(); self.settings.firmware_project=vars_["firmware_project"].get().strip()
+                 self.settings.flash_baud=int(vars_["flash_baud"].get()); self.settings.monitor_baud=int(vars_["monitor_baud"].get()); self.settings.test_seconds=max(3,int(vars_["test_seconds"].get())); self.settings.report_csv=vars_["report_csv"].get().strip()
+                 self.settings.save(); self.project_var.set(self.settings.firmware_project)
+                 self._idf_env_cache_key = None; self._idf_env_cache = None

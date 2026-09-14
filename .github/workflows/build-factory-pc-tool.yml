@@ -3,9 +3,10 @@ name: Build VisionSen Factory PC Tool
 on:
   push:
     branches:
-      - factory-pc-tool-v0.3.0
+      - factory-pc-tool-v0.3.1
     paths:
       - '.factory_source/**'
+      - '.factory_patch/**'
       - '.github/workflows/build-factory-pc-tool.yml'
   workflow_dispatch:
 
@@ -34,7 +35,13 @@ jobs:
           $b64 = ($parts | ForEach-Object { Get-Content $_.FullName -Raw }) -join ''
           [IO.File]::WriteAllBytes('factory-source.zip', [Convert]::FromBase64String($b64))
           Expand-Archive -Path 'factory-source.zip' -DestinationPath 'factory-src' -Force
-          Get-ChildItem 'factory-src' -Recurse | Select-Object FullName
+
+      - name: Apply v0.3.1 ESP-IDF environment fix
+        shell: pwsh
+        run: |
+          git apply --check --directory=factory-src/VisionSen-Factory-PC-Tool-v0.3.0 .factory_patch/v0.3.1.patch
+          git apply --directory=factory-src/VisionSen-Factory-PC-Tool-v0.3.0 .factory_patch/v0.3.1.patch
+          python -m py_compile factory-src/VisionSen-Factory-PC-Tool-v0.3.0/visionsen_factory_tool.py
 
       - name: Install dependencies
         shell: pwsh
@@ -53,13 +60,13 @@ jobs:
           Pop-Location
           $exe = Join-Path $src.FullName 'dist/VisionSen-Factory-PC-Tool.exe'
           if (!(Test-Path $exe)) { throw 'EXE output not found' }
-          Copy-Item $exe 'VisionSen-Factory-PC-Tool-v0.3.0.exe'
-          Get-FileHash 'VisionSen-Factory-PC-Tool-v0.3.0.exe' -Algorithm SHA256 | Format-List
+          Copy-Item $exe 'VisionSen-Factory-PC-Tool-v0.3.1.exe'
+          Get-FileHash 'VisionSen-Factory-PC-Tool-v0.3.1.exe' -Algorithm SHA256 | Format-List
 
       - name: Upload Windows EXE
         uses: actions/upload-artifact@v4
         with:
-          name: VisionSen-Factory-PC-Tool-v0.3.0-Windows
-          path: VisionSen-Factory-PC-Tool-v0.3.0.exe
+          name: VisionSen-Factory-PC-Tool-v0.3.1-Windows
+          path: VisionSen-Factory-PC-Tool-v0.3.1.exe
           if-no-files-found: error
           retention-days: 30
