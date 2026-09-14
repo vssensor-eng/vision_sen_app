@@ -1,0 +1,1 @@
+VisionSen Factory PC Tool v0.3.2 full-source build input. This branch intentionally avoids patch-based source mutation.
