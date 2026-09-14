@@ -44,7 +44,6 @@ jobs:
           python3 - <<'PY'
           from pathlib import Path
 
-          # Version.
           p = Path('pubspec.yaml')
           s = p.read_text(encoding='utf-8')
           if 'version: 1.6.9+27' not in s:
@@ -52,9 +51,15 @@ jobs:
           s = s.replace('version: 1.6.9+27', 'version: 1.6.11+29', 1)
           p.write_text(s, encoding='utf-8')
 
-          # Provisioning must use the dedicated mobile Bearer endpoint.
           p = Path('lib/screens/wifi_provision_screen.dart')
           s = p.read_text(encoding='utf-8')
+          s = s.replace("import '../config_app.dart';\n", '')
+          if "import '../services/mobile_api_service.dart';" not in s:
+              s = s.replace(
+                  "import '../services/app_session.dart';\n",
+                  "import '../services/app_session.dart';\nimport '../services/mobile_api_service.dart';\n",
+                  1,
+              )
           start = s.find('  Future<bool> _ensureProvisioningBootstrap() async {')
           end = s.find('  Future<void> _scanQrAndConnect() async {', start)
           if start < 0 or end < 0:
@@ -63,7 +68,6 @@ jobs:
           s = s[:start] + replacement + s[end:]
           p.write_text(s, encoding='utf-8')
 
-          # Remove the browser-cookie company-key helper from the mobile API.
           p = Path('lib/services/mobile_api_service.dart')
           s = p.read_text(encoding='utf-8')
           start = s.find('  Future<String> companyDeviceKey() async {')
@@ -72,7 +76,6 @@ jobs:
               s = s[:start] + s[end:]
           p.write_text(s, encoding='utf-8')
 
-          # Remove the session wrapper that could log the user out on /company/key 401.
           p = Path('lib/services/app_session.dart')
           s = p.read_text(encoding='utf-8')
           start = s.find('  Future<String?> fetchCompanyDeviceKey() async {')
@@ -81,7 +84,6 @@ jobs:
               s = s[:start] + s[end:]
           p.write_text(s, encoding='utf-8')
 
-          # Keep the remembered-login wording explicit: password itself is never persisted.
           p = Path('lib/screens/mobile/login_screen.dart')
           s = p.read_text(encoding='utf-8')
           old = 'Oturumu açık tut seçiliyken uygulamayı kapatıp açmanız tekrar şifre istemez. ÇIKIŞ YAP işlemi oturumu bilinçli olarak kapatır.'
@@ -111,6 +113,7 @@ jobs:
               'version': ('version: 1.6.11+29', pub),
               'dedicated provisioning endpoint': ("'/mobile/provisioning/bootstrap'", api),
               'provisioning uses mobile endpoint': ('widget.session.api.provisioningBootstrap()', screen),
+              'mobile API import': ("import '../services/mobile_api_service.dart';", screen),
               'remember token storage': ("_storage.write(key: _tokenKey", session),
               'password not persisted wording': ('Parolanız telefonda saklanmaz', login),
               'QR scanner preserved': ('package:mobile_scanner/mobile_scanner.dart', qr),
