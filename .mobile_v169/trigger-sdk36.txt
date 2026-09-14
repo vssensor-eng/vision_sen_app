@@ -1,0 +1,1 @@
+rebuild with compileSdk 36 and minSdk 23
