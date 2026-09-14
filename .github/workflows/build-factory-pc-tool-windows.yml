@@ -1,0 +1,70 @@
+name: Build VisionSen Factory PC Tool Windows
+
+on:
+  push:
+    branches:
+      - chatgpt/factory-tool-v0.2.0-windows
+    paths:
+      - 'factory_pc_tool/**'
+      - '.github/workflows/build-factory-pc-tool-windows.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-windows-exe:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+
+      - name: Install build dependencies
+        shell: pwsh
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install pyinstaller pyserial
+
+      - name: Syntax check
+        shell: pwsh
+        run: python -m py_compile factory_pc_tool/visionsen_factory_desktop.py
+
+      - name: Build Windows desktop EXE
+        shell: pwsh
+        run: |
+          python -m PyInstaller `
+            --noconfirm `
+            --clean `
+            --onefile `
+            --windowed `
+            --name VisionSen-Factory-PC-Tool-v0.2.0 `
+            factory_pc_tool/visionsen_factory_desktop.py
+
+      - name: Verify executable and hash
+        shell: pwsh
+        run: |
+          if (!(Test-Path 'dist/VisionSen-Factory-PC-Tool-v0.2.0.exe')) { throw 'EXE not found' }
+          Get-Item 'dist/VisionSen-Factory-PC-Tool-v0.2.0.exe' | Format-List Name,Length
+          Get-FileHash 'dist/VisionSen-Factory-PC-Tool-v0.2.0.exe' -Algorithm SHA256 | Format-List
+
+      - name: Create portable package
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force package | Out-Null
+          Copy-Item 'dist/VisionSen-Factory-PC-Tool-v0.2.0.exe' package/
+          Copy-Item 'factory_pc_tool/README_TR.md' package/
+          Compress-Archive -Path package/* -DestinationPath 'VisionSen-Factory-PC-Tool-v0.2.0-Windows-Portable.zip' -Force
+
+      - name: Upload Windows desktop app
+        uses: actions/upload-artifact@v5
+        with:
+          name: VisionSen-Factory-PC-Tool-v0.2.0-Windows
+          path: |
+            dist/VisionSen-Factory-PC-Tool-v0.2.0.exe
+            VisionSen-Factory-PC-Tool-v0.2.0-Windows-Portable.zip
+          retention-days: 90
