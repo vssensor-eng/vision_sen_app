@@ -1,0 +1,192 @@
+name: Build VisionSen Factory PC Tool v0.4.1 Standalone
+
+on:
+  push:
+    branches:
+      - factory-pc-tool-v0.4.1
+    paths:
+      - '.factory_v041/**'
+      - '.factory_v040_fw/**'
+      - '.github/workflows/build-factory-pc-tool-v041.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-firmware:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Restore exact OIM3 v2.1.7 firmware source
+        shell: bash
+        run: |
+          set -euo pipefail
+          count=$(find .factory_v040_fw -maxdepth 1 -name 'part*.txt' | wc -l)
+          test "$count" -eq 13
+          cat .factory_v040_fw/part*.txt | base64 -d > fw217.tar.xz
+          echo "8e5851db02bcf7c248df6844b435a6bf12550a2fad4e58d1bc7d7770a6659a73  fw217.tar.xz" | sha256sum -c -
+          mkdir -p fwsrc
+          tar -xJf fw217.tar.xz -C fwsrc
+          test -f fwsrc/visionsen_oim3_idf_v2_1_7_qr_factory/CMakeLists.txt
+          grep -q 'PROJECT_VER "2.1.7"' fwsrc/visionsen_oim3_idf_v2_1_7_qr_factory/CMakeLists.txt
+
+      - name: Build embedded firmware with ESP-IDF 6.1
+        shell: bash
+        run: |
+          set -euo pipefail
+          if docker pull espressif/idf:v6.1; then
+            image='espressif/idf:v6.1'
+          else
+            docker pull espressif/idf:release-v6.1
+            image='espressif/idf:release-v6.1'
+          fi
+          docker run --rm \
+            -v "$PWD/fwsrc/visionsen_oim3_idf_v2_1_7_qr_factory:/project" \
+            -w /project \
+            "$image" \
+            bash -lc 'idf.py set-target esp32 && idf.py build'
+
+      - name: Collect embedded standalone flash package
+        shell: python
+        run: |
+          import hashlib, json, shutil
+          from pathlib import Path
+          build = Path('fwsrc/visionsen_oim3_idf_v2_1_7_qr_factory/build')
+          out = Path('firmware-package'); out.mkdir(exist_ok=True)
+          p = build / 'flasher_args.json'
+          if not p.is_file(): raise SystemExit('flasher_args.json missing')
+          data = json.loads(p.read_text(encoding='utf-8'))
+          files = data.get('flash_files') or {}
+          if not files: raise SystemExit('flash_files empty')
+          if any(int(str(addr),0)==0x12000 for addr in files):
+              raise SystemExit('SAFETY FAIL: factory_data 0x12000 must not be part of normal firmware flash')
+          rewritten={}; hashes={}
+          for addr, rel in files.items():
+              src=build/rel
+              if not src.is_file(): raise SystemExit(f'missing {rel}')
+              dst=out/src.name; shutil.copy2(src,dst)
+              rewritten[addr]=src.name
+              hashes[src.name]=hashlib.sha256(dst.read_bytes()).hexdigest()
+          data['flash_files']=rewritten
+          (out/'flasher_args.json').write_text(json.dumps(data,indent=2),encoding='utf-8')
+          (out/'visionsen_firmware_manifest.json').write_text(json.dumps({'firmware_version':'2.1.7','target':'esp32','sha256':hashes},indent=2),encoding='utf-8')
+
+      - name: Upload embedded firmware package
+        uses: actions/upload-artifact@v4
+        with:
+          name: oim3-v2.1.7-flash-package-v041
+          path: firmware-package
+          if-no-files-found: error
+          retention-days: 30
+
+  build-windows:
+    runs-on: windows-latest
+    needs: build-firmware
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+
+      - name: Restore exact v0.4.1 application source
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          python .factory_v041/restore_source.py
+          Copy-Item factory_pc_tool_v040/requirements.txt factory_pc_tool_v041/requirements.txt -Force
+          python -m py_compile factory_pc_tool_v041/visionsen_factory_tool.py
+
+      - name: Download embedded firmware
+        uses: actions/download-artifact@v4
+        with:
+          name: oim3-v2.1.7-flash-package-v041
+          path: firmware
+
+      - name: Assert v0.4.1 UI, firmware selection and connection gates
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          @'
+          from pathlib import Path
+          import json
+          p=Path('factory_pc_tool_v041/visionsen_factory_tool.py')
+          s=p.read_text(encoding='utf-8')
+          required=[
+            'APP_VERSION = "0.4.1"',
+            'BUILD_MARKER = "dark-ui-firmware-select"',
+            'VisionSen Üretim ve Kalite Kontrol',
+            'Firmware dosyası / paket',
+            'def select_firmware_file(self):',
+            'def use_embedded_firmware(self):',
+            'def _inspect_firmware_zip(self, path: Path)',
+            'def _inspect_app_bin(self, path: Path)',
+            'def _probe_esp32(self, port: str)',
+            '"read-mac"',
+            'Cihaz bağlantısı doğrulanmadan işlem yapılamaz',
+            'Firmware yükleme tamamlandı',
+            'Kimlik yazma + readback doğrulaması tamamlandı',
+            '_set_operation_status',
+            'storage/queue',
+          ]
+          missing=[x for x in required if x not in s]
+          if missing: raise SystemExit(f'SOURCE ASSERT FAILED {missing}')
+          m=Path('firmware/flasher_args.json')
+          if not m.is_file(): raise SystemExit('firmware manifest missing')
+          d=json.loads(m.read_text(encoding='utf-8'))
+          if not d.get('flash_files'): raise SystemExit('flash_files empty')
+          if any(int(str(x),0)==0x12000 for x in d['flash_files']): raise SystemExit('factory_data overwrite risk')
+          print('ASSERT PASS v0.4.1 dark-ui-firmware-select')
+          '@ | Set-Content assert_v041.py -Encoding UTF8
+          python assert_v041.py
+
+      - name: Install standalone dependencies
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          python -m pip install --upgrade pip
+          python -m pip install -r factory_pc_tool_v041/requirements.txt
+          python -m pip install pyinstaller
+
+      - name: Build standalone Windows EXE
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          python -m PyInstaller --noconfirm --clean --onefile --windowed `
+            --name VisionSen-Factory-PC-Tool-v0.4.1-Standalone `
+            --add-data "firmware;firmware" `
+            --collect-all esptool `
+            --collect-all esp_idf_nvs_partition_gen `
+            --collect-all esp_pylib `
+            --collect-all rich_click `
+            factory_pc_tool_v041/visionsen_factory_tool.py
+          if ($LASTEXITCODE -ne 0) { throw "PyInstaller failed: $LASTEXITCODE" }
+          Get-FileHash dist/VisionSen-Factory-PC-Tool-v0.4.1-Standalone.exe -Algorithm SHA256 | Format-List
+
+      - name: Create source package
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          New-Item -ItemType Directory -Force package-source | Out-Null
+          Copy-Item factory_pc_tool_v041/visionsen_factory_tool.py package-source/
+          Copy-Item factory_pc_tool_v041/requirements.txt package-source/
+          Copy-Item -Recurse firmware package-source/firmware
+          Compress-Archive -Path package-source/* -DestinationPath VisionSen-Factory-PC-Tool-v0.4.1-Standalone-source.zip -Force
+
+      - name: Upload standalone Windows package
+        uses: actions/upload-artifact@v4
+        with:
+          name: VisionSen-Factory-PC-Tool-v0.4.1-Standalone-Windows
+          path: |
+            dist/VisionSen-Factory-PC-Tool-v0.4.1-Standalone.exe
+            VisionSen-Factory-PC-Tool-v0.4.1-Standalone-source.zip
+            firmware/visionsen_firmware_manifest.json
+          if-no-files-found: error
+          retention-days: 30
