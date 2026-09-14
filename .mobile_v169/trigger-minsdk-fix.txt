@@ -1,0 +1,1 @@
+rebuild after exact minSdk line patch
