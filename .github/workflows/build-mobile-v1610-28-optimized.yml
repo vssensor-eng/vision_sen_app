@@ -1,0 +1,170 @@
+name: Build VisionSen Mobile v1.6.10+28 Optimized APKs
+
+on:
+  push:
+    branches:
+      - mobile-v1.6.10-28
+    paths:
+      - '.github/workflows/build-mobile-v1610-28-optimized.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  build-android:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Restore verified v1.6.9+27 production source
+        uses: actions/download-artifact@v4
+        with:
+          name: VisionSen-Mobile-v1.6.9+27-Production-Android
+          path: previous
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          run-id: 34901024377
+
+      - name: Promote source to v1.6.10+28
+        run: |
+          set -euo pipefail
+          rm -rf source-stage
+          mkdir -p source-stage
+          unzip -q 'previous/VisionSen-Mobile-v1.6.9+27-source.zip' -d source-stage
+          rm -rf lib test tool pubspec.yaml README.md
+          cp -a source-stage/artifact-source/lib .
+          cp -a source-stage/artifact-source/test .
+          cp -a source-stage/artifact-source/tool .
+          cp source-stage/artifact-source/pubspec.yaml .
+          cp source-stage/artifact-source/README.md .
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path('pubspec.yaml')
+          s = p.read_text(encoding='utf-8')
+          if 'version: 1.6.9+27' not in s:
+              raise SystemExit('Expected v1.6.9+27 source version not found')
+          s = s.replace('version: 1.6.9+27', 'version: 1.6.10+28', 1)
+          p.write_text(s, encoding='utf-8')
+          r = Path('README.md')
+          if r.exists():
+              t = r.read_text(encoding='utf-8')
+              t = t.replace('1.6.9+27', '1.6.10+28')
+              r.write_text(t, encoding='utf-8')
+          PY
+
+      - name: Assert provisioning/security contract
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          pub = Path('pubspec.yaml').read_text(encoding='utf-8')
+          screen = Path('lib/screens/wifi_provision_screen.dart').read_text(encoding='utf-8')
+          qr = Path('lib/screens/provision_qr_scanner_screen.dart').read_text(encoding='utf-8')
+          api = Path('lib/services/mobile_api_service.dart').read_text(encoding='utf-8')
+          session = Path('lib/services/app_session.dart').read_text(encoding='utf-8')
+          svc = Path('lib/services/wifi_provision_service.dart').read_text(encoding='utf-8')
+          required = {
+              'version': ('version: 1.6.10+28', pub),
+              'mobile scanner': ('package:mobile_scanner/mobile_scanner.dart', qr),
+              'company key endpoint': ("'/company/key'", api),
+              'login session key loader': ('fetchCompanyDeviceKey', session),
+              'determinate progress': ('LinearProgressIndicator', screen),
+              'qr-first': ('QR KODUNU TARA', screen),
+              'serial verification': ('serial_locked', screen),
+              'factory auth': ('factory_secret', screen),
+              '8-char QR': ('static ProvisioningQrData? tryParse', svc),
+              'cloud check': ('findDeviceBySerial', screen),
+          }
+          missing = [name for name, (needle, text) in required.items() if needle not in text]
+          if missing:
+              raise SystemExit(f'contract assert failed: {missing}')
+          print('VisionSen Mobile v1.6.10+28 contract ASSERT PASS')
+          PY
+
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.24.0'
+          channel: stable
+          cache: true
+
+      - name: Prepare Android platform
+        run: bash tool/bootstrap_android_v169.sh
+
+      - name: Enable unbundled ML Kit barcode model
+        run: |
+          set -euo pipefail
+          PROP='dev.steenbakker.mobile_scanner.useUnbundled=true'
+          if grep -q '^dev.steenbakker.mobile_scanner.useUnbundled=' android/gradle.properties; then
+            sed -i 's/^dev\.steenbakker\.mobile_scanner\.useUnbundled=.*/dev.steenbakker.mobile_scanner.useUnbundled=true/' android/gradle.properties
+          else
+            printf '\n%s\n' "$PROP" >> android/gradle.properties
+          fi
+          grep 'dev.steenbakker.mobile_scanner.useUnbundled=true' android/gradle.properties
+
+      - name: Install dependencies
+        run: flutter pub get
+
+      - name: Static analysis
+        run: flutter analyze --no-fatal-warnings
+
+      - name: Unit tests
+        run: flutter test
+
+      - name: Build universal release APK
+        run: flutter build apk --release
+
+      - name: Save universal APK
+        run: |
+          mkdir -p out
+          cp build/app/outputs/flutter-apk/app-release.apk 'out/VisionSen-Mobile-v1.6.10+28-UNIVERSAL.apk'
+
+      - name: Build ABI-split release APKs
+        run: flutter build apk --release --split-per-abi
+
+      - name: Package optimized APKs and source
+        run: |
+          set -euo pipefail
+          cp build/app/outputs/flutter-apk/app-arm64-v8a-release.apk 'out/VisionSen-Mobile-v1.6.10+28-ARM64.apk'
+          cp build/app/outputs/flutter-apk/app-armeabi-v7a-release.apk 'out/VisionSen-Mobile-v1.6.10+28-ARMv7.apk'
+          cp build/app/outputs/flutter-apk/app-x86_64-release.apk 'out/VisionSen-Mobile-v1.6.10+28-x86_64.apk'
+
+          if unzip -l 'out/VisionSen-Mobile-v1.6.10+28-ARM64.apk' | grep -q 'libbarhopper'; then
+            echo 'Bundled ML Kit libbarhopper still present; optimization failed.' >&2
+            exit 1
+          fi
+
+          mkdir -p artifact-source
+          cp pubspec.yaml README.md artifact-source/
+          cp -R lib test tool artifact-source/
+          cp android/gradle.properties artifact-source/android-gradle.properties
+          zip -qr 'out/VisionSen-Mobile-v1.6.10+28-source.zip' artifact-source
+
+          sha256sum out/*.apk > 'out/VisionSen-Mobile-v1.6.10+28-SHA256.txt'
+          python3 - <<'PY'
+          from pathlib import Path
+          rows = []
+          for p in sorted(Path('out').glob('*.apk')):
+              size = p.stat().st_size
+              rows.append(f'{p.name}\t{size} bytes\t{size/1024/1024:.2f} MiB')
+          report = '\n'.join(rows) + '\n'
+          Path('out/VisionSen-Mobile-v1.6.10+28-SIZE-REPORT.txt').write_text(report, encoding='utf-8')
+          print(report)
+          PY
+
+      - name: Upload optimized APKs and source
+        uses: actions/upload-artifact@v4
+        with:
+          name: VisionSen-Mobile-v1.6.10+28-Optimized-Android
+          path: out/
+          if-no-files-found: error
+          retention-days: 30
