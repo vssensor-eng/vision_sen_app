@@ -96,7 +96,12 @@ for name in ('android/app/build.gradle', 'android/app/build.gradle.kts'):
     if not p.exists():
         continue
     t = p.read_text()
-    t = re.sub(r'compileSdk\s*=?\s*[^\n]+', 'compileSdk = 35', t, count=1)
+    # mobile_scanner / CameraX 1.5 require compileSdk 36 and Android API 23 minimum.
+    t = re.sub(r'compileSdk\s*=?\s*[^\n]+', 'compileSdk = 36', t, count=1)
+    if 'minSdkVersion' in t:
+        t = re.sub(r'minSdkVersion\s+[^\n]+', 'minSdkVersion 23', t, count=1)
+    elif re.search(r'\bminSdk\s*=?\s*[^\n]+', t):
+        t = re.sub(r'\bminSdk\s*=?\s*[^\n]+', 'minSdk = 23', t, count=1)
     if re.search(r'ndkVersion\s*=?\s*[^\n]+', t):
         t = re.sub(r'ndkVersion\s*=?\s*[^\n]+', 'ndkVersion = "26.1.10909125"', t, count=1)
     else:
