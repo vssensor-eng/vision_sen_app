@@ -97,13 +97,37 @@ for name in ('android/app/build.gradle', 'android/app/build.gradle.kts'):
         continue
     t = p.read_text()
     # mobile_scanner / CameraX 1.5 require compileSdk 36 and Android API 23 minimum.
-    t = re.sub(r'compileSdk\s*=?\s*[^\n]+', 'compileSdk = 36', t, count=1)
-    if 'minSdkVersion' in t:
-        t = re.sub(r'minSdkVersion\s+[^\n]+', 'minSdkVersion 23', t, count=1)
-    elif re.search(r'\bminSdk\s*=?\s*[^\n]+', t):
-        t = re.sub(r'\bminSdk\s*=?\s*[^\n]+', 'minSdk = 23', t, count=1)
-    if re.search(r'ndkVersion\s*=?\s*[^\n]+', t):
-        t = re.sub(r'ndkVersion\s*=?\s*[^\n]+', 'ndkVersion = "26.1.10909125"', t, count=1)
+    t, compile_count = re.subn(
+        r'(?m)^(\s*)compileSdk\s*=?\s*[^\r\n]+$',
+        r'\1compileSdk = 36',
+        t,
+        count=1,
+    )
+    if compile_count != 1:
+        raise SystemExit(f'compileSdk satırı bulunamadı: {name}')
+
+    min_count = 0
+    patterns = [
+        (r'(?m)^(\s*)minSdk\s*=\s*[^\r\n]+$', r'\1minSdk = 23'),
+        (r'(?m)^(\s*)minSdkVersion\s*=\s*[^\r\n]+$', r'\1minSdkVersion = 23'),
+        (r'(?m)^(\s*)minSdkVersion\s+[^\r\n]+$', r'\1minSdkVersion 23'),
+    ]
+    for pattern, replacement in patterns:
+        t2, count = re.subn(pattern, replacement, t, count=1)
+        if count:
+            t = t2
+            min_count = 1
+            break
+    if min_count != 1:
+        raise SystemExit(f'minSdk satırı bulunamadı: {name}')
+
+    if re.search(r'(?m)^\s*ndkVersion\s*=?\s*[^\r\n]+$', t):
+        t = re.sub(
+            r'(?m)^(\s*)ndkVersion\s*=?\s*[^\r\n]+$',
+            r'\1ndkVersion = "26.1.10909125"',
+            t,
+            count=1,
+        )
     else:
         t = re.sub(r'(android\s*\{)', r'\1\n    ndkVersion = "26.1.10909125"', t, count=1)
     if name.endswith('.kts'):
