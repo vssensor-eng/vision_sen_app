@@ -1,0 +1,140 @@
+name: Build VisionSen Factory Tool Desktop
+
+on:
+  push:
+    branches:
+      - chatgpt/factory-tool-desktop-v0.2.0
+  workflow_dispatch:
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+
+      - name: Reconstruct Factory Tool source and icon
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force factory_tool\assets | Out-Null
+          $src64 = ((Get-ChildItem factory_tool\embed\source.part.* | Sort-Object Name | Get-Content -Raw) -join '')
+          [IO.File]::WriteAllBytes('factory_tool\source.py.gz', [Convert]::FromBase64String($src64))
+          python -c "import gzip,pathlib; pathlib.Path(r'factory_tool/visionsen_factory_tool.py').write_bytes(gzip.decompress(pathlib.Path(r'factory_tool/source.py.gz').read_bytes()))"
+          Remove-Item factory_tool\source.py.gz
+          $ico64 = ((Get-ChildItem factory_tool\embed\icon.part.* | Sort-Object Name | Get-Content -Raw) -join '')
+          [IO.File]::WriteAllBytes('factory_tool\assets\visionsen_factory.ico', [Convert]::FromBase64String($ico64))
+          @'
+pyserial==3.5
+pyinstaller==6.15.0
+'@ | Set-Content -Encoding UTF8 factory_tool\requirements-build.txt
+
+      - name: Write Windows metadata
+        shell: pwsh
+        run: |
+          @'
+VSVersionInfo(
+  ffi=FixedFileInfo(filevers=(0,2,0,0), prodvers=(0,2,0,0), mask=0x3f, flags=0x0, OS=0x40004, fileType=0x1, subtype=0x0, date=(0,0)),
+  kids=[StringFileInfo([StringTable('040904B0', [
+    StringStruct('CompanyName', 'VisionSen'),
+    StringStruct('FileDescription', 'VisionSen Factory PC Tool'),
+    StringStruct('FileVersion', '0.2.0'),
+    StringStruct('InternalName', 'VisionSen-Factory-Tool'),
+    StringStruct('OriginalFilename', 'VisionSen-Factory-Tool.exe'),
+    StringStruct('ProductName', 'VisionSen Factory PC Tool'),
+    StringStruct('ProductVersion', '0.2.0')
+  ])]), VarFileInfo([VarStruct('Translation', [1033, 1200])])]
+)
+'@ | Set-Content -Encoding UTF8 factory_tool\version_info.txt
+          @'
+#define MyAppName "VisionSen Factory Tool"
+#define MyAppVersion "0.2.0"
+#define MyAppExeName "VisionSen-Factory-Tool.exe"
+
+[Setup]
+AppId={{A5C09E12-7F59-4B86-B739-1BEBF2A9E8D1}
+AppName={#MyAppName}
+AppVersion={#MyAppVersion}
+AppPublisher=VisionSen
+DefaultDirName={localappdata}\Programs\VisionSen\Factory Tool
+DefaultGroupName=VisionSen
+DisableProgramGroupPage=yes
+PrivilegesRequired=lowest
+OutputDir=installer_out
+OutputBaseFilename=VisionSen-Factory-PC-Tool-v0.2.0-Setup
+SetupIconFile=assets\visionsen_factory.ico
+UninstallDisplayIcon={app}\{#MyAppExeName}
+Compression=lzma2
+SolidCompression=yes
+WizardStyle=modern
+ArchitecturesAllowed=x64compatible
+
+[Files]
+Source: "dist\{#MyAppExeName}"; DestDir: "{app}"; Flags: ignoreversion
+
+[Icons]
+Name: "{autodesktop}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; WorkingDir: "{app}"
+Name: "{group}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; WorkingDir: "{app}"
+Name: "{group}\VisionSen Factory Tool'u Kaldır"; Filename: "{uninstallexe}"
+
+[Run]
+Filename: "{app}\{#MyAppExeName}"; Description: "{#MyAppName} uygulamasını başlat"; Flags: nowait postinstall skipifsilent
+'@ | Set-Content -Encoding UTF8 factory_tool\installer.iss
+
+      - name: Install build dependencies
+        shell: pwsh
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r factory_tool\requirements-build.txt
+
+      - name: Build portable EXE
+        shell: pwsh
+        working-directory: factory_tool
+        run: |
+          python -m PyInstaller --noconfirm --clean --onefile --windowed `
+            --name VisionSen-Factory-Tool `
+            --icon assets\visionsen_factory.ico `
+            --version-file version_info.txt `
+            --hidden-import serial.tools.list_ports `
+            visionsen_factory_tool.py
+          if (-not (Test-Path 'dist\VisionSen-Factory-Tool.exe')) { throw 'Portable EXE olusmadi.' }
+
+      - name: Ensure Inno Setup
+        shell: pwsh
+        run: |
+          $candidates = @('C:\Program Files (x86)\Inno Setup 6\ISCC.exe','C:\Program Files\Inno Setup 6\ISCC.exe')
+          $iscc = $candidates | Where-Object { Test-Path $_ } | Select-Object -First 1
+          if (-not $iscc) { choco install innosetup -y --no-progress }
+
+      - name: Build desktop installer
+        shell: pwsh
+        working-directory: factory_tool
+        run: |
+          $candidates = @('C:\Program Files (x86)\Inno Setup 6\ISCC.exe','C:\Program Files\Inno Setup 6\ISCC.exe')
+          $iscc = $candidates | Where-Object { Test-Path $_ } | Select-Object -First 1
+          if (-not $iscc) { throw 'Inno Setup 6 bulunamadi.' }
+          & $iscc installer.iss
+          if (-not (Test-Path 'installer_out\VisionSen-Factory-PC-Tool-v0.2.0-Setup.exe')) { throw 'Installer olusmadi.' }
+
+      - name: Hash outputs
+        shell: pwsh
+        working-directory: factory_tool
+        run: |
+          Get-FileHash 'dist\VisionSen-Factory-Tool.exe' -Algorithm SHA256
+          Get-FileHash 'installer_out\VisionSen-Factory-PC-Tool-v0.2.0-Setup.exe' -Algorithm SHA256
+
+      - name: Upload portable EXE
+        uses: actions/upload-artifact@v5
+        with:
+          name: VisionSen-Factory-Tool-v0.2.0-Portable
+          path: factory_tool/dist/VisionSen-Factory-Tool.exe
+
+      - name: Upload desktop installer
+        uses: actions/upload-artifact@v5
+        with:
+          name: VisionSen-Factory-PC-Tool-v0.2.0-Setup
+          path: factory_tool/installer_out/VisionSen-Factory-PC-Tool-v0.2.0-Setup.exe
