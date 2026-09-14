@@ -100,7 +100,7 @@ jobs:
         shell: pwsh
         run: |
           $ErrorActionPreference='Stop'
-          python .factory_v041/restore_source.py
+          python .factory_v041/restore_from_parts.py
           Copy-Item factory_pc_tool_v040/requirements.txt factory_pc_tool_v041/requirements.txt -Force
           python -m py_compile factory_pc_tool_v041/visionsen_factory_tool.py
 
