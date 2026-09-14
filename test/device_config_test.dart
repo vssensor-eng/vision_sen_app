@@ -1,4 +1,5 @@
 import 'package:flutter_test/flutter_test.dart';
+import 'package:visionsen_setup/services/wifi_provision_service.dart';
 import 'package:visionsen_setup/models/device.dart';
 
 const validKeyA = 'ABCDEF0123456789ABCDEF0123456789';
@@ -89,14 +90,21 @@ void main() {
   });
 
   group('VisionSen compatibility', () {
-    test('environment monitor + Wi-Fi provisioning protocol v2 is supported', () {
+    test('environment monitor + Wi-Fi provisioning protocol v3 is supported', () {
       expect(
         VisionSenCompatibility.isSupportedIdentity(
           VisionSenCompatibility.environmentMonitor,
-          2,
+          3,
         ),
         isTrue,
       );
+    });
+
+
+    test('factory provisioning secret validation', () {
+      expect(WifiProvisionService.validateProvisioningSecret('Q7K4M9P2R6TW8DFA3X5N'), isNull);
+      expect(WifiProvisionService.validateProvisioningSecret('short'), isNotNull);
+      expect(WifiProvisionService.validateProvisioningSecret('INVALID-CODE-WITH-DASH'), isNotNull);
     });
 
     test('old BLE protocol identity and unknown device types are rejected', () {

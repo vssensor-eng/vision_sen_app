@@ -24,7 +24,8 @@ class WifiProvisionService {
   static const String deviceBaseUrl = 'http://192.168.4.1';
   static const String apNamePrefix = 'VISIONSEN-OIM3-';
   static const String apNamePattern = 'VISIONSEN-OIM3-ESP-XXXXXX';
-  static const String apPassword = 'VisionSenOIM3';
+  static const int minProvisioningSecretLength = 16;
+  static const int maxProvisioningSecretLength = 32;
   static const MethodChannel _platform = MethodChannel('com.visionsen/setup');
 
   final ValueNotifier<bool> connectionNotifier = ValueNotifier<bool>(false);
@@ -141,13 +142,31 @@ class WifiProvisionService {
     }
   }
 
-  Future<bool> connectToDevice(String ssid) async {
+  static String? validateProvisioningSecret(String value) {
+    final secret = value.trim();
+    if (secret.length < minProvisioningSecretLength ||
+        secret.length > maxProvisioningSecretLength) {
+      return 'Cihaz kurulum kodu $minProvisioningSecretLength-$maxProvisioningSecretLength karakter olmalı.';
+    }
+    if (!RegExp(r'^[A-Za-z0-9]{16,32}$').hasMatch(secret)) {
+      return 'Cihaz kurulum kodu yalnızca harf ve rakam içerebilir.';
+    }
+    return null;
+  }
+
+  Future<bool> connectToDevice(String ssid, String provisioningSecret) async {
     lastError = null;
     if (_closed) {
       lastError = 'Kurulum servisi kapalı.';
       return false;
     }
     final selected = ssid.trim();
+    final secret = provisioningSecret.trim();
+    final secretError = validateProvisioningSecret(secret);
+    if (secretError != null) {
+      lastError = secretError;
+      return false;
+    }
     if (!selected.startsWith(apNamePrefix)) {
       lastError = 'Seçilen ağ bir VisionSen kurulum cihazı değil.';
       return false;
@@ -165,7 +184,7 @@ class WifiProvisionService {
         'connectProvisioningWifi',
         {
           'ssid': selected,
-          'password': apPassword,
+          'password': secret,
           'timeoutMs': 35000,
         },
       ).timeout(const Duration(seconds: 40));

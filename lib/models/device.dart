@@ -7,7 +7,7 @@ class VisionSenCompatibility {
   /// provisioning protokol sürümü birlikte değerlendirilir; tanımlı olmayan hiçbir eşleşme
   /// kurulum akışına alınmaz.
   static const Map<String, Set<int>> supportedIdentities = {
-    environmentMonitor: {2},
+    environmentMonitor: {3},
   };
 
   static bool isSupportedProtocol(int value) =>
