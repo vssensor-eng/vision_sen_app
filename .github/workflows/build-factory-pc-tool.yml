@@ -6,7 +6,6 @@ on:
       - factory-pc-tool-v0.3.3
     paths:
       - '.factory_v032/**'
-      - '.factory_patch/v0.3.3.patch'
       - '.github/workflows/build-factory-pc-tool.yml'
   workflow_dispatch:
 
@@ -39,16 +38,30 @@ jobs:
           if ($hash -ne 'fb0ee127fb1b92a64208bd1dc55d0e95284ebb2b0bf342d526430b968b3f4a49') { throw "Base source ZIP hash mismatch: $hash" }
           Expand-Archive -Path 'factory-v032-source.zip' -DestinationPath 'factory-src' -Force
 
-      - name: Apply v0.3.3 cwd-call fix
+      - name: Transform exact source to v0.3.3
         shell: pwsh
         run: |
-          $ErrorActionPreference = 'Stop'
-          Push-Location 'factory-src/VisionSen-Factory-PC-Tool-v0.3.2'
-          git apply --check '../../.factory_patch/v0.3.3.patch'
-          if ($LASTEXITCODE -ne 0) { throw "git apply --check failed with exit code $LASTEXITCODE" }
-          git apply '../../.factory_patch/v0.3.3.patch'
-          if ($LASTEXITCODE -ne 0) { throw "git apply failed with exit code $LASTEXITCODE" }
-          Pop-Location
+          @'
+          from pathlib import Path
+          p = Path(r'factory-src/VisionSen-Factory-PC-Tool-v0.3.2/visionsen_factory_tool.py')
+          s = p.read_text(encoding='utf-8')
+          replacements = [
+              ('APP_VERSION = "0.3.2"', 'APP_VERSION = "0.3.3"'),
+              ('BUILD_MARKER = "idf-env2-fullsource"', 'BUILD_MARKER = "idf-cwd-call"'),
+              ('Bu Factory Tool v0.3.2,', 'Bu Factory Tool v0.3.3,'),
+              ("command = f'call \"{export_bat}\" && echo {sentinel} && set'", "command = f'call export.bat && echo {sentinel} && set'"),
+              ('["cmd.exe", "/d", "/s", "/c", command],\n                env=env,', '["cmd.exe", "/d", "/c", command],\n                cwd=str(idf_path),\n                env=env,'),
+          ]
+          for old, new in replacements:
+              count = s.count(old)
+              if count != 1:
+                  raise SystemExit(f'Expected exactly one source match, got {count}: {old!r}')
+              s = s.replace(old, new, 1)
+          p.write_text(s, encoding='utf-8')
+          print('SOURCE TRANSFORM PASS')
+          '@ | Set-Content -Path transform_v033.py -Encoding UTF8
+          python transform_v033.py
+          if ($LASTEXITCODE -ne 0) { throw "v0.3.3 source transform failed with exit code $LASTEXITCODE" }
 
       - name: Assert exact v0.3.3 source before packaging
         shell: pwsh
@@ -80,6 +93,7 @@ jobs:
           print('SOURCE ASSERT PASS: v0.3.3 idf-cwd-call')
           '@ | Set-Content -Path assert_v033.py -Encoding UTF8
           python assert_v033.py
+          if ($LASTEXITCODE -ne 0) { throw "v0.3.3 source assert failed with exit code $LASTEXITCODE" }
 
       - name: Install dependencies
         shell: pwsh
