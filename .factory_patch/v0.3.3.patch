@@ -1,0 +1,43 @@
+--- a/visionsen_factory_tool.py
++++ b/visionsen_factory_tool.py
+@@ -38,8 +38,8 @@
+     ImageTk = None
+ 
+ APP_NAME = "VisionSen Factory Tool"
+-APP_VERSION = "0.3.2"
+-BUILD_MARKER = "idf-env2-fullsource"
++APP_VERSION = "0.3.3"
++BUILD_MARKER = "idf-cwd-call"
+ CONFIG_FILE = Path.home() / ".visionsen_factory_tool.json"
+ DEFAULT_REPORT = Path.home() / "VisionSenFactory" / "production_records.csv"
+ DEFAULT_LABEL_DIR = Path.home() / "VisionSenFactory" / "labels"
+@@ -460,7 +460,7 @@
+             cmake_text = ""
+         if 'set(PROJECT_VER "2.1.7")' not in cmake_text:
+             raise RuntimeError(
+-                "Bu Factory Tool v0.3.2, OIM3 firmware v2.1.7 QR Factory ile kullanılmalıdır.\n"
++                "Bu Factory Tool v0.3.3, OIM3 firmware v2.1.7 QR Factory ile kullanılmalıdır.\n"
+                 f"Seçili klasör: {p}\n\n"
+                 "Klasör adının v2_1_6 olması sorun değildir; ancak içindeki CMakeLists.txt PROJECT_VER=2.1.7 olmalıdır. "
+                 "Yeni firmware paketini bu klasöre çıkarın veya doğru v2.1.7 proje klasörünü seçin."
+@@ -588,13 +588,15 @@
+             env["PATH"] = str(python_path.parent) + os.pathsep + env.get("PATH", "")
+ 
+         if os.name == "nt":
+-            # Aynı gizli cmd içinde export.bat'i CALL ile çalıştırıp sonrasında SET
+-            # çıktısını alıyoruz. Kritik nokta: hazırladığımız env bu alt sürece
+-            # gerçekten aktarılıyor (v0.3.0'da env=env eksikti).
++            # Windows cmd.exe /S /C, tam export.bat yolunu içeren komutta çift
++            # tırnakları bazı sistemlerde yanlış yorumlayabiliyor. Bu nedenle
++            # ESP-IDF klasörünü çalışma dizini yapıp export.bat'i yalnız dosya
++            # adıyla CALL ediyoruz. Böylece path/quote problemi tamamen kalkar.
+             sentinel = "__VISIONSEN_ENV_BEGIN__"
+-            command = f'call "{export_bat}" && echo {sentinel} && set'
++            command = f'call export.bat && echo {sentinel} && set'
+             completed = subprocess.run(
+-                ["cmd.exe", "/d", "/s", "/c", command],
++                ["cmd.exe", "/d", "/c", command],
++                cwd=str(idf_path),
+                 env=env,
+                 stdout=subprocess.PIPE,
+                 stderr=subprocess.STDOUT,
