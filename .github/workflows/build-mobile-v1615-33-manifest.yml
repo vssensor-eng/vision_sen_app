@@ -1,0 +1,90 @@
+name: Build VisionSen Mobile v1.6.15+33 Device Manifest
+
+on:
+  push:
+    branches:
+      - mobile-v1.6.15-33
+    paths:
+      - '.mobile_v1615/**'
+      - '.github/workflows/build-mobile-v1615-33-manifest.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-android:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Apply v1.6.15+33 serial-bound manifest patch
+        shell: bash
+        run: |
+          set -euo pipefail
+          base64 -d .mobile_v1615/patch.gz.b64 | gzip -d > /tmp/mobile1615.patch
+          patch -p1 < /tmp/mobile1615.patch
+          rm -f lib/screens/mobile/add_device_screen.dart
+          grep -F 'version: 1.6.15+33' pubspec.yaml
+          grep -F "formatV2 = 'VS2'" lib/services/wifi_provision_service.dart
+          grep -F "manifestCanonicalPrefix = 'VS-MANIFEST-1'" lib/services/wifi_provision_service.dart
+          grep -F 'environmentMonitor: {3, 4}' lib/models/device.dart
+          test ! -f lib/screens/mobile/add_device_screen.dart
+          ! grep -R "createDevice(" -n lib/services lib/screens/mobile
+          ! grep -R "createSensor(" -n lib/services lib/screens/mobile
+
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.24.0'
+          channel: stable
+          cache: true
+
+      - name: Prepare Android platform
+        shell: bash
+        run: |
+          set -euo pipefail
+          bash tool/bootstrap_android_v169.sh
+          echo 'dev.steenbakker.mobile_scanner.useUnbundled=true' >> android/gradle.properties
+
+      - name: Resolve packages
+        run: flutter pub get
+
+      - name: Analyze
+        run: flutter analyze --no-fatal-infos
+
+      - name: Test
+        run: flutter test
+
+      - name: Build release APK
+        run: flutter build apk --release
+
+      - name: Create source package and hashes
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p artifact-source
+          cp -a lib test tool pubspec.yaml README.md android-gradle.properties artifact-source/
+          zip -qr VisionSen-Mobile-v1.6.15+33-source.zip artifact-source
+          cp build/app/outputs/flutter-apk/app-release.apk VisionSen-Mobile-v1.6.15+33.apk
+          sha256sum VisionSen-Mobile-v1.6.15+33.apk VisionSen-Mobile-v1.6.15+33-source.zip > SHA256SUMS.txt
+          cat SHA256SUMS.txt
+
+      - name: Upload APK and source
+        uses: actions/upload-artifact@v4
+        with:
+          name: VisionSen-Mobile-v1.6.15+33-Device-Manifest
+          path: |
+            VisionSen-Mobile-v1.6.15+33.apk
+            VisionSen-Mobile-v1.6.15+33-source.zip
+            SHA256SUMS.txt
+          if-no-files-found: error
+          retention-days: 30
