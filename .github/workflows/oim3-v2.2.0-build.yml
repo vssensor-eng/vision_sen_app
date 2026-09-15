@@ -1,0 +1,96 @@
+name: OIM3 v2.2.0 Production Baseline Build
+
+on:
+  push:
+    branches:
+      - oim3-build-v2.2.0
+    paths:
+      - 'oim3-build/v2.2.0/**'
+      - '.github/workflows/oim3-v2.2.0-build.yml'
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout v2.2.0 build branch
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Reconstruct verified v2.1.12 source
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch origin oim3-build-v2.1.10:refs/remotes/origin/oim3-build-v2.1.10
+          git checkout origin/oim3-build-v2.1.10 -- oim3-build/v2.1.10/source3
+          rm -rf oim3-build/v2.2.0/project
+          mkdir -p /tmp/oim3-src oim3-build/v2.2.0/project
+          cat oim3-build/v2.1.10/source3/part-*.b64 | base64 -d > /tmp/oim3-src/source.tar.xz
+          echo '402a28487cc01cc6e31f0e5eb9b8b1d02b8bc416c8e2e149692869edd0f2b88d  /tmp/oim3-src/source.tar.xz' | sha256sum -c -
+          tar -xJf /tmp/oim3-src/source.tar.xz -C oim3-build/v2.2.0/project
+          cat oim3-build/v2.1.11/script/part-*.b64 | base64 -d > /tmp/apply_v211.py
+          python3 -m py_compile /tmp/apply_v211.py
+          (cd oim3-build/v2.2.0/project && python3 /tmp/apply_v211.py)
+          (cd oim3-build/v2.2.0/project && python3 ../../v2.1.11/postfix.py)
+          (cd oim3-build/v2.2.0/project && patch -p1 < ../../v2.1.12/v211-to-v212.patch)
+          echo 'BASE_SOURCE_SHA256=402a28487cc01cc6e31f0e5eb9b8b1d02b8bc416c8e2e149692869edd0f2b88d' >> "$GITHUB_ENV"
+
+      - name: Apply v2.2.0 production baseline patch
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat oim3-build/v2.2.0/patch/part-*.b64 | base64 -d | gzip -d > /tmp/v212-to-v220.patch
+          (cd oim3-build/v2.2.0/project && git apply --check /tmp/v212-to-v220.patch)
+          (cd oim3-build/v2.2.0/project && git apply /tmp/v212-to-v220.patch)
+          cd oim3-build/v2.2.0/project
+          python3 tools/validate_strict.py
+          grep -F 'set(PROJECT_VER "2.2.0")' CMakeLists.txt
+          grep -F 'FIRMWARE_VERSION = "2.2.0"' components/oim_board/include/oim_board.hpp
+          grep -F 'SYSTEM_CONTRACT = "VS-OIM3-STRICT-1"' components/oim_board/include/oim_board.hpp
+          grep -F 'PROVISION_PROTOCOL_VERSION = 4' components/oim_board/include/oim_board.hpp
+          grep -F 'Factory manifest missing; strict customer operation blocked' components/oim_factory/oim_factory.cpp
+          ! grep -R -n --exclude-dir=build --exclude=sdkconfig --exclude='*.md' 'legacy_default\|use_legacy_default_manifest\|PROVISION_PROTOCOL_VERSION = 3' components main tools
+          echo 'v2.2.0 production baseline source invariants: PASS'
+
+      - name: Build ESP32 firmware with ESP-IDF v6.1
+        uses: espressif/esp-idf-ci-action@v1
+        with:
+          esp_idf_version: v6.1
+          target: esp32
+          path: oim3-build/v2.2.0/project
+          command: idf.py build
+
+      - name: Collect production artifacts
+        shell: bash
+        run: |
+          set -euo pipefail
+          P='oim3-build/v2.2.0/project/build'
+          A='oim3-build/v2.2.0/artifact'
+          mkdir -p "$A"
+          test -s "$P/bootloader/bootloader.bin"
+          test -s "$P/partition_table/partition-table.bin"
+          test -s "$P/ota_data_initial.bin"
+          test -s "$P/visionsen_oim3.bin"
+          cp "$P/bootloader/bootloader.bin" "$A/bootloader.bin"
+          cp "$P/partition_table/partition-table.bin" "$A/partition-table.bin"
+          cp "$P/ota_data_initial.bin" "$A/ota_data_initial.bin"
+          cp "$P/visionsen_oim3.bin" "$A/visionsen_oim3.bin"
+          if [ -f "$P/flasher_args.json" ]; then cp "$P/flasher_args.json" "$A/build-flasher_args.json"; fi
+          sha256sum "$A"/*.bin | sed "s#$A/##" > "$A/SHA256SUMS.txt"
+          printf 'baseline_source_sha256=%s\nesp_idf=v6.1\ntarget=esp32\nproject_version=2.2.0\nfirmware_name=VS-ESP-IDF-V2.2.0-OIM3-PRODUCTION-BASELINE\nsystem_contract=VS-OIM3-STRICT-1\nmanifest_schema=1\nprovision_protocol=4\nqueue_version=4\nnonce_mode=counter-v1\n' "$BASE_SOURCE_SHA256" > "$A/BUILD_INFO.txt"
+          strings "$A/visionsen_oim3.bin" | grep -F 'VS-ESP-IDF-V2.2.0-OIM3-PRODUCTION-BASELINE'
+          strings "$A/visionsen_oim3.bin" | grep -F 'VS-OIM3-STRICT-1'
+          tar --exclude='./build' --exclude='./artifact' -czf "$A/VisionSen-OIM3-v2.2.0-Production-Baseline-source.tar.gz" -C oim3-build/v2.2.0/project .
+          sha256sum "$A/VisionSen-OIM3-v2.2.0-Production-Baseline-source.tar.gz" >> "$A/SHA256SUMS.txt"
+          ls -lh "$A"
+
+      - name: Upload OIM3 v2.2.0 production artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: VisionSen-OIM3-v2.2.0-Production-Baseline
+          path: oim3-build/v2.2.0/artifact/
+          if-no-files-found: error
+          retention-days: 30
