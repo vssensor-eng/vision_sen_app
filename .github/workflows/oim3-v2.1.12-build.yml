@@ -40,7 +40,13 @@ jobs:
           grep -F 'set(PROJECT_VER "2.1.12")' oim3-build/v2.1.12/project/CMakeLists.txt
           grep -F 'FIRMWARE_VERSION = "2.1.12"' oim3-build/v2.1.12/project/components/oim_board/include/oim_board.hpp
           grep -F 'PROVISION_PROTOCOL_VERSION = 4' oim3-build/v2.1.12/project/components/oim_board/include/oim_board.hpp
-          (cd oim3-build/v2.1.12/project && python3 tools/validate_final.py)
+          grep -F 'MANIFEST_NAMESPACE = "manifest"' oim3-build/v2.1.12/project/components/oim_factory/include/oim_factory.hpp
+          grep -F 'MANIFEST_SCHEMA_VERSION = 1' oim3-build/v2.1.12/project/components/oim_factory/include/oim_factory.hpp
+          grep -F 'sensor_enabled("SHT45", 1U)' oim3-build/v2.1.12/project/components/oim_sensors/oim_sensors.cpp
+          grep -F 'sensor_enabled("BATTERY", 1U)' oim3-build/v2.1.12/project/components/oim_sensors/oim_sensors.cpp
+          grep -F 'cJSON_AddObjectToObject(doc, "manifest")' oim3-build/v2.1.12/project/components/oim_provision/oim_provision.cpp
+          grep -F 'SHT45:1,BATTERY:1 fallback' oim3-build/v2.1.12/project/components/oim_factory/oim_factory.cpp
+          echo 'v2.1.12 manifest source invariants: PASS'
           echo 'BASE_SOURCE_SHA256=402a28487cc01cc6e31f0e5eb9b8b1d02b8bc416c8e2e149692869edd0f2b88d' >> "$GITHUB_ENV"
 
       - name: Build ESP32 firmware with ESP-IDF v6.1
@@ -70,6 +76,7 @@ jobs:
           sha256sum "$A"/*.bin | sed "s#$A/##" > "$A/SHA256SUMS.txt"
           printf 'baseline_source_sha256=%s\nesp_idf=v6.1\ntarget=esp32\nproject_version=2.1.12\nfirmware_name=VS-ESP-IDF-V2.1.12-OIM3-PRODUCTION\nmanifest_schema=1\nprovision_protocol=4\n' "$BASE_SOURCE_SHA256" > "$A/BUILD_INFO.txt"
           strings "$A/visionsen_oim3.bin" | grep -F 'VS-ESP-IDF-V2.1.12-OIM3-PRODUCTION'
+          strings "$A/visionsen_oim3.bin" | grep -F 'Factory manifest'
           ls -lh "$A"
 
       - name: Upload PC Tool build artifact
