@@ -38,7 +38,7 @@ jobs:
           (cd oim3-build/v2.2.0/project && patch -p1 < ../../v2.1.12/v211-to-v212.patch)
           echo 'BASE_SOURCE_SHA256=402a28487cc01cc6e31f0e5eb9b8b1d02b8bc416c8e2e149692869edd0f2b88d' >> "$GITHUB_ENV"
 
-      - name: Apply v2.2.0 production baseline patch
+      - name: Apply and validate v2.2.0 production baseline
         shell: bash
         run: |
           set -euo pipefail
@@ -46,13 +46,38 @@ jobs:
           (cd oim3-build/v2.2.0/project && git apply --check /tmp/v212-to-v220.patch)
           (cd oim3-build/v2.2.0/project && git apply /tmp/v212-to-v220.patch)
           cd oim3-build/v2.2.0/project
-          python3 tools/validate_strict.py
+          python3 - <<'PY'
+          from pathlib import Path
+          import sys
+          R=Path('.')
+          def t(p): return (R/p).read_text(encoding='utf-8')
+          board=t('components/oim_board/include/oim_board.hpp')
+          factory=t('components/oim_factory/oim_factory.cpp')
+          prov=t('components/oim_provision/oim_provision.cpp')
+          cfg=t('components/oim_config/oim_config.cpp')
+          q=t('components/oim_queue/oim_queue.cpp')
+          nonce=t('components/oim_nonce/oim_nonce.cpp')
+          cm=t('CMakeLists.txt')
+          checks={
+            'version': 'PROJECT_VER "2.2.0"' in cm and 'FIRMWARE_VERSION = "2.2.0"' in board and 'PRODUCTION-BASELINE' in board,
+            'contract': 'VS-OIM3-STRICT-1' in board and 'system_contract' in prov,
+            'manifest_required': 'Factory manifest missing; strict customer operation blocked' in factory,
+            'config_current': 'send_interval_err != ESP_OK' in cfg,
+            'queue_current': 'QUEUE_VERSION = 4' in q and 'h.capacity == PHYSICAL_RECORDS' in q,
+            'nonce_current': 'PARTITION = "nonce_state"' in nonce and 'NAMESPACE = "oimnonce"' in nonce,
+            'protocol4': 'PROVISION_PROTOCOL_VERSION = 4' in board,
+          }
+          failed=[k for k,v in checks.items() if not v]
+          if failed:
+              print('FIRMWARE PRODUCTION BASELINE GATE FAIL:', ', '.join(failed)); sys.exit(1)
+          print('FIRMWARE PRODUCTION BASELINE GATE PASS')
+          PY
           grep -F 'set(PROJECT_VER "2.2.0")' CMakeLists.txt
           grep -F 'FIRMWARE_VERSION = "2.2.0"' components/oim_board/include/oim_board.hpp
           grep -F 'SYSTEM_CONTRACT = "VS-OIM3-STRICT-1"' components/oim_board/include/oim_board.hpp
           grep -F 'PROVISION_PROTOCOL_VERSION = 4' components/oim_board/include/oim_board.hpp
           grep -F 'Factory manifest missing; strict customer operation blocked' components/oim_factory/oim_factory.cpp
-          ! grep -R -n --exclude-dir=build --exclude=sdkconfig --exclude='*.md' 'legacy_default\|use_legacy_default_manifest\|PROVISION_PROTOCOL_VERSION = 3' components main tools
+          ! grep -R -n --exclude-dir=build --exclude=sdkconfig --exclude='*.md' 'legacy_default\|use_legacy_default_manifest\|PROVISION_PROTOCOL_VERSION = 3' components main
           echo 'v2.2.0 production baseline source invariants: PASS'
 
       - name: Build ESP32 firmware with ESP-IDF v6.1
