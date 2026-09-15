@@ -84,9 +84,14 @@ checks = '''# Y3: query predicates must not mutate retry state. Backoff time is 
 assert 'should_attempt_network_this_cycle' not in RUNTIME
 assert 'void advance_network_backoff(uint32_t elapsed_seconds)' in RUNTIME
 assert 'bool network_attempt_allowed()' in RUNTIME
-assert 's_network_retry_remaining_s -=' in RUNTIME.split('void advance_network_backoff',1)[1].split('bool network_attempt_allowed',1)[0]
+advance_body=RUNTIME.split('void advance_network_backoff',1)[1].split('bool network_attempt_allowed',1)[0]
+assert 's_network_retry_remaining_s -=' in advance_body
 allowed_body=RUNTIME.split('bool network_attempt_allowed()',1)[1].split('void reset_network_backoff',1)[0]
-assert 's_network_retry_remaining_s =' not in allowed_body
+assert 'return s_network_retry_remaining_s == 0U;' in allowed_body
+assert 's_network_retry_remaining_s -=' not in allowed_body
+assert 's_network_retry_remaining_s +=' not in allowed_body
+assert 's_network_retry_remaining_s++' not in allowed_body
+assert 's_network_retry_remaining_s--' not in allowed_body
 assert 'advance_network_backoff(oim::board::SENSOR_SAMPLE_INTERVAL_SECONDS);' in APP
 assert 'const bool backoff_allows_network = oim::runtime::network_attempt_allowed();' in APP
 
