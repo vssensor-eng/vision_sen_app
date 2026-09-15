@@ -11,6 +11,7 @@ on:
 
 permissions:
   contents: read
+  actions: read
 
 jobs:
   build-android:
@@ -20,10 +21,27 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Restore verified v1.6.14+32 final source
+        uses: actions/download-artifact@v4
+        with:
+          name: VisionSen-Mobile-v1.6.14+32-Auto-Device
+          path: previous
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          run-id: 34906894752
+
       - name: Apply v1.6.15+33 serial-bound manifest patch
         shell: bash
         run: |
           set -euo pipefail
+          rm -rf source-stage lib test tool pubspec.yaml README.md android-gradle.properties
+          mkdir -p source-stage
+          unzip -q 'previous/VisionSen-Mobile-v1.6.14+32-source.zip' -d source-stage
+          cp -a source-stage/artifact-source/lib .
+          cp -a source-stage/artifact-source/test .
+          cp -a source-stage/artifact-source/tool .
+          cp source-stage/artifact-source/pubspec.yaml .
+          cp source-stage/artifact-source/README.md .
+          cp source-stage/artifact-source/android-gradle.properties .
           base64 -d .mobile_v1615/patch.gz.b64 | gzip -d > /tmp/mobile1615.patch
           patch -p1 < /tmp/mobile1615.patch
           rm -f lib/screens/mobile/add_device_screen.dart
@@ -34,6 +52,8 @@ jobs:
           test ! -f lib/screens/mobile/add_device_screen.dart
           ! grep -R "createDevice(" -n lib/services lib/screens/mobile
           ! grep -R "createSensor(" -n lib/services lib/screens/mobile
+          ! grep -R "deleteSensor(" -n lib/services lib/screens/mobile
+          echo 'v1.6.15+33 source invariants: PASS'
 
       - name: Set up Java
         uses: actions/setup-java@v4
@@ -53,6 +73,7 @@ jobs:
         run: |
           set -euo pipefail
           bash tool/bootstrap_android_v169.sh
+          cat android-gradle.properties >> android/gradle.properties
           echo 'dev.steenbakker.mobile_scanner.useUnbundled=true' >> android/gradle.properties
 
       - name: Resolve packages
@@ -71,6 +92,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          rm -rf artifact-source
           mkdir -p artifact-source
           cp -a lib test tool pubspec.yaml README.md android-gradle.properties artifact-source/
           zip -qr VisionSen-Mobile-v1.6.15+33-source.zip artifact-source
