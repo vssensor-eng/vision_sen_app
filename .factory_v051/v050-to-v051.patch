@@ -1,0 +1,53 @@
+--- a/visionsen_factory_tool.py
++++ b/visionsen_factory_tool.py
+@@ -54,7 +54,7 @@
+     nvsgen = None
+ 
+ APP_NAME = "VisionSen Factory Tool"
+-APP_VERSION = "0.5.0"
++APP_VERSION = "0.5.1"
+ BUILD_MARKER = "serial-bound-device-manifest"
+ CONFIG_FILE = Path.home() / ".visionsen_factory_tool.json"
+ DEFAULT_REPORT = Path.home() / "VisionSenFactory" / "production_records.csv"
+@@ -386,8 +386,8 @@
+ 
+         self.configure(bg=BG)
+         self.title(f"VisionSen Üretim ve Kalite Kontrol v{APP_VERSION}")
+-        self.geometry("1180x790")
+-        self.minsize(1080, 720)
++        self.geometry("1180x960")
++        self.minsize(1080, 820)
+ 
+         style = ttk.Style(self)
+         try:
+@@ -560,6 +560,12 @@
+         self.manifest_status_var = tk.StringVar(value="Manifest seri numarasına bağlıdır; sensör seçimini değiştirdiğinizde hash değişir.")
+         tk.Label(manifest, textvariable=self.manifest_status_var, bg=PANEL, fg=MUTED,
+                  font=("Segoe UI", 9, "bold"), anchor="w").grid(row=2, column=0, columnspan=8, sticky="ew", padx=2, pady=(3, 0))
++        self.manifest_help_var = tk.StringVar(value="1) Fiziksel sensörleri seç  2) İlk üretimde v1; sensör değişiminde sürümü artır  3) Seçili Sensörleri Cihaza Yaz")
++        tk.Label(manifest, textvariable=self.manifest_help_var, bg=PANEL, fg=BLUE,
++                 font=("Segoe UI", 8, "bold"), anchor="w").grid(row=3, column=0, columnspan=6, sticky="ew", padx=2, pady=(7, 2))
++        self.write_manifest_button = self._register_device_widget(btn(
++            manifest, "Seçili Sensörleri Cihaza Yaz", self.write_identity, width=27, state="disabled"))
++        self.write_manifest_button.grid(row=3, column=6, columnspan=2, sticky="e", padx=4, pady=(5, 2))
+         for var in (self.serial_var, self.manifest_version_var, self.manifest_sht45_var, self.manifest_battery_var):
+             var.trace_add("write", lambda *_: self._refresh_manifest_preview())
+         self.after(0, self._refresh_manifest_preview)
+@@ -599,7 +605,7 @@
+         log_frame.grid(row=1, column=0, sticky="nsew")
+         log_frame.rowconfigure(0, weight=1)
+         log_frame.columnconfigure(0, weight=1)
+-        self.log_text = tk.Text(log_frame, wrap="none", height=25, bg="#000716", fg="#e7edf8",
++        self.log_text = tk.Text(log_frame, wrap="none", height=34, bg="#000716", fg="#e7edf8",
+                                 insertbackground="#ffffff", selectbackground="#274b7a", font=("Consolas", 9),
+                                 relief="flat", bd=0)
+         self.log_text.grid(row=0, column=0, sticky="nsew", padx=5, pady=5)
+@@ -1508,7 +1514,7 @@
+             messagebox.showerror(APP_NAME, "Üretim tarihi YYYY-MM-DD formatında olmalı."); return
+         if not PROVISION_SECRET_RE.fullmatch(prov_secret):
+             messagebox.showerror(APP_NAME, "Kurulum kodu tam 8 karakter olmalı ve yalnız harf/rakam içermeli."); return
+-        if not messagebox.askyesno(APP_NAME, f"{serial_no} Factory Identity + Device Manifest yazılsın/güncellensin mi?\n\nSensörler: {', '.join(sensor_keys)}\nManifest v{manifest_version}\nHash: {manifest_hash_hex[:16]}…"):
++        if not messagebox.askyesno(APP_NAME, f"{serial_no} cihazına Factory Identity + Device Manifest yazılsın/güncellensin mi?\n\nSeçilen fiziksel sensörler: {', '.join(sensor_keys)}\nManifest v{manifest_version}\nHash: {manifest_hash_hex[:16]}…\n\nFirmware yeniden başladığında yalnız manifestte seçili sensörleri okuyacaktır."):
+             return
+         def work():
+             self.post("progress", 8)
