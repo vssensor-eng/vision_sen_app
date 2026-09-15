@@ -1,0 +1,159 @@
+name: Build VisionSen Factory PC Tool v0.5.0 Standalone
+
+on:
+  push:
+    branches:
+      - factory-pc-tool-v0.5.0
+    paths:
+      - '.factory_v050/**'
+      - '.github/workflows/build-factory-pc-tool-v050.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+    timeout-minutes: 35
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+
+      - name: Restore v0.5.0 source
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          New-Item -ItemType Directory -Force factory_pc_tool_v050 | Out-Null
+          $parts = Get-ChildItem .factory_v050/source/part-*.b64 | Sort-Object Name
+          if ($parts.Count -lt 1) { throw 'v0.5.0 source parts missing' }
+          $b64 = ($parts | ForEach-Object { Get-Content $_.FullName -Raw }) -join ''
+          [IO.File]::WriteAllBytes('source.gz',[Convert]::FromBase64String($b64))
+          python -c "import gzip,pathlib; pathlib.Path('factory_pc_tool_v050/visionsen_factory_tool.py').write_bytes(gzip.decompress(pathlib.Path('source.gz').read_bytes()))"
+          Copy-Item factory_pc_tool_v040/requirements.txt factory_pc_tool_v050/requirements.txt -Force
+          python -m py_compile factory_pc_tool_v050/visionsen_factory_tool.py
+
+      - name: Assert manifest UI and contract
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          @'
+          from pathlib import Path
+          p=Path('factory_pc_tool_v050/visionsen_factory_tool.py')
+          s=p.read_text(encoding='utf-8')
+          required=[
+            'APP_VERSION = "0.5.0"',
+            'QR_FORMAT = "VS2"',
+            'VS-MANIFEST-1',
+            'SHT45',
+            'BATTERY',
+            'manifest',
+          ]
+          missing=[x for x in required if x not in s]
+          if missing: raise SystemExit(f'v0.5.0 source assert failed: {missing}')
+          print('Factory v0.5.0 source assert: PASS')
+          '@ | Set-Content assert_v050.py -Encoding UTF8
+          python assert_v050.py
+
+      - name: Download verified OIM3 v2.1.12 firmware artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: VisionSen-OIM3-v2.1.12-build
+          path: firmware-raw
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          run-id: 34993776836
+
+      - name: Prepare standalone firmware package
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          @'
+          import hashlib, json, shutil
+          from pathlib import Path
+          src=Path('firmware-raw')
+          out=Path('firmware'); out.mkdir(exist_ok=True)
+          expected={
+            'bootloader.bin':'37bfa82860051bd256f6b4d2d0173a02fbf9277a31e6866a5120c6dc2bf3049e',
+            'partition-table.bin':'4e4f13ef32d3f53b8c66d046047112160a8494205577d1622cabe70b7ce40519',
+            'ota_data_initial.bin':'7d2c7ac4888bfd75cd5f56e8d61f69595121183afc81556c876732fd3782c62f',
+            'visionsen_oim3.bin':'34defe25a5eafdf43c48365bec76d7ebf091c14294daaf5296b8c8bedf62194b',
+          }
+          for name, want in expected.items():
+              p=src/name
+              if not p.is_file(): raise SystemExit(f'missing firmware file: {name}')
+              got=hashlib.sha256(p.read_bytes()).hexdigest()
+              if got != want: raise SystemExit(f'hash mismatch {name}: {got}')
+              shutil.copy2(p,out/name)
+          flasher={
+            'write_flash_args':['--flash-mode','dio','--flash-size','4MB','--flash-freq','40m'],
+            'flash_settings':{'flash_mode':'dio','flash_size':'4MB','flash_freq':'40m'},
+            'flash_files':{'0x1000':'bootloader.bin','0x8000':'partition-table.bin','0x10000':'ota_data_initial.bin','0x20000':'visionsen_oim3.bin'},
+            'extra_esptool_args':{'after':'hard-reset','before':'default-reset','stub':True,'chip':'esp32'},
+          }
+          (out/'flasher_args.json').write_text(json.dumps(flasher,indent=2),encoding='utf-8')
+          manifest={
+            'firmware_version':'2.1.12',
+            'firmware_name':'VS-ESP-IDF-V2.1.12-OIM3-PRODUCTION',
+            'target':'esp32','esp_idf':'v6.1','provision_protocol':4,'device_manifest_schema':1,
+            'protected_not_flashed':{'factory_data':'0x12000..0x17fff','nonce_state':'0x18000..0x1ffff','storage':'0x320000..0x3fffff'},
+            'sha256':expected,
+          }
+          (out/'visionsen_firmware_manifest.json').write_text(json.dumps(manifest,indent=2),encoding='utf-8')
+          if any(int(a,0) in (0x12000,0x18000,0x320000) for a in flasher['flash_files']):
+              raise SystemExit('protected partition flash risk')
+          print('Firmware package v2.1.12: PASS')
+          '@ | Set-Content prepare_fw.py -Encoding UTF8
+          python prepare_fw.py
+
+      - name: Install standalone dependencies
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          python -m pip install --upgrade pip
+          python -m pip install -r factory_pc_tool_v050/requirements.txt
+          python -m pip install pyinstaller
+
+      - name: Build standalone Windows EXE
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          python -m PyInstaller --noconfirm --clean --onefile --windowed `
+            --name VisionSen-Factory-PC-Tool-v0.5.0-Standalone `
+            --add-data "firmware;firmware" `
+            --collect-all esptool `
+            --collect-all esp_idf_nvs_partition_gen `
+            --collect-all esp_pylib `
+            --collect-all rich_click `
+            factory_pc_tool_v050/visionsen_factory_tool.py
+          if ($LASTEXITCODE -ne 0) { throw "PyInstaller failed: $LASTEXITCODE" }
+          if (-not (Test-Path dist/VisionSen-Factory-PC-Tool-v0.5.0-Standalone.exe)) { throw 'EXE missing' }
+          Get-FileHash dist/VisionSen-Factory-PC-Tool-v0.5.0-Standalone.exe -Algorithm SHA256 | Format-List
+
+      - name: Create source package
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          New-Item -ItemType Directory -Force package-source | Out-Null
+          Copy-Item factory_pc_tool_v050/visionsen_factory_tool.py package-source/
+          Copy-Item factory_pc_tool_v050/requirements.txt package-source/
+          Copy-Item -Recurse firmware package-source/firmware
+          Compress-Archive -Path package-source/* -DestinationPath VisionSen-Factory-PC-Tool-v0.5.0-Standalone-source.zip -Force
+          Get-FileHash VisionSen-Factory-PC-Tool-v0.5.0-Standalone-source.zip -Algorithm SHA256 | Format-List
+
+      - name: Upload standalone Windows package
+        uses: actions/upload-artifact@v4
+        with:
+          name: VisionSen-Factory-PC-Tool-v0.5.0-Standalone-Windows
+          path: |
+            dist/VisionSen-Factory-PC-Tool-v0.5.0-Standalone.exe
+            VisionSen-Factory-PC-Tool-v0.5.0-Standalone-source.zip
+            firmware/visionsen_firmware_manifest.json
+            firmware/flasher_args.json
+          if-no-files-found: error
+          retention-days: 30
