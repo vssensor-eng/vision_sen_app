@@ -8,6 +8,7 @@ on:
       - '.github/workflows/build-oim3-v219-production-hardening.yml'
       - '.github/scripts/prepromote_oim3_217_218.py'
       - '.github/scripts/patch_oim3_v219.py'
+      - '.github/scripts/patch_oim3_v219_y3.py'
   workflow_dispatch:
 
 permissions:
@@ -41,6 +42,7 @@ jobs:
           rm -f "$root/sdkconfig" "$root/sdkconfig.old"
           find "$root" -name '*.pyc' -delete
           python3 .github/scripts/patch_oim3_v219.py "$root"
+          python3 .github/scripts/patch_oim3_v219_y3.py "$root"
           cd "$root"
           python3 tools/validate_final.py
 
@@ -103,8 +105,6 @@ jobs:
               hashes[src.name] = sha
               flash_map.append({'address': f'0x{addr:x}', 'file': src.name, 'size': dst.stat().st_size, 'sha256': sha})
 
-          # The partition table must be part of the flash payload and the new
-          # nonce_state partition must never have an initialization image.
           if not any(x['address'].lower() == '0x8000' for x in flash_map):
               raise SystemExit('partition-table flash entry missing')
           if any(x['file'] == 'nonce_state.bin' for x in flash_map):
@@ -126,6 +126,7 @@ jobs:
                   'deep_sleep_wake_opens_provisioning': False,
                   'nonce_persistence': ['nvs', 'nonce_state'],
                   'nonce_spiffs_dependency': False,
+                  'network_backoff_predicate_side_effect_free': True,
                   'rtc_slow_clock': 'INT_RC',
                   'compiler_optimization': 'size',
                   'default_log_level': 'WARN',
