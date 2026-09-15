@@ -1,0 +1,178 @@
+name: Build VisionSen OIM3 v2.1.9 Production Hardening
+
+on:
+  push:
+    branches:
+      - oim3-v2.1.9-production-hardening
+    paths:
+      - '.github/workflows/build-oim3-v219-production-hardening.yml'
+      - '.github/scripts/prepromote_oim3_217_218.py'
+      - '.github/scripts/patch_oim3_v219.py'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Restore exact v2.1.7 baseline and apply v2.1.9 hardening
+        shell: bash
+        run: |
+          set -euo pipefail
+          count=$(find .factory_v040_fw -maxdepth 1 -name 'part*.txt' | wc -l)
+          test "$count" -eq 13
+          cat .factory_v040_fw/part*.txt | base64 -d > fw217.tar.xz
+          echo "8e5851db02bcf7c248df6844b435a6bf12550a2fad4e58d1bc7d7770a6659a73  fw217.tar.xz" | sha256sum -c -
+          rm -rf fwsrc
+          mkdir -p fwsrc
+          tar -xJf fw217.tar.xz -C fwsrc
+          root="fwsrc/visionsen_oim3_idf_v2_1_7_qr_factory"
+          test -f "$root/CMakeLists.txt"
+          python3 .github/scripts/prepromote_oim3_217_218.py "$root"
+          mv "$root" fwsrc/visionsen_oim3_idf_v2_1_9_production
+          root="fwsrc/visionsen_oim3_idf_v2_1_9_production"
+          rm -rf "$root/build" "$root/__pycache__"
+          rm -f "$root/sdkconfig" "$root/sdkconfig.old"
+          find "$root" -name '*.pyc' -delete
+          python3 .github/scripts/patch_oim3_v219.py "$root"
+          cd "$root"
+          python3 tools/validate_final.py
+
+      - name: Build with ESP-IDF 6.1 and run generated-config release gate
+        shell: bash
+        run: |
+          set -euo pipefail
+          if docker pull espressif/idf:v6.1; then
+            image='espressif/idf:v6.1'
+          else
+            docker pull espressif/idf:release-v6.1
+            image='espressif/idf:release-v6.1'
+          fi
+          docker run --rm \
+            -v "$PWD/fwsrc/visionsen_oim3_idf_v2_1_9_production:/project" \
+            -w /project \
+            "$image" \
+            bash -lc 'rm -f sdkconfig sdkconfig.old && idf.py set-target esp32 && idf.py build && python3 tools/validate_final.py'
+
+      - name: Validate flash map and package release
+        shell: python
+        run: |
+          from pathlib import Path
+          import hashlib, json, shutil, zipfile
+
+          root = Path('fwsrc/visionsen_oim3_idf_v2_1_9_production')
+          build = root / 'build'
+          out = Path('out'); out.mkdir(exist_ok=True)
+          pkg = Path('package'); pkg.mkdir(exist_ok=True)
+
+          args_path = build / 'flasher_args.json'
+          if not args_path.is_file():
+              raise SystemExit('flasher_args.json missing')
+          data = json.loads(args_path.read_text(encoding='utf-8'))
+          files = data.get('flash_files') or {}
+          if not files:
+              raise SystemExit('flasher_args.json flash_files empty')
+
+          protected = [
+              (0x12000, 0x18000, 'factory_data'),
+              (0x18000, 0x20000, 'nonce_state'),
+              (0x320000, 0x400000, 'storage'),
+          ]
+          rewritten = {}
+          hashes = {}
+          flash_map = []
+          for addr_text, rel in files.items():
+              addr = int(str(addr_text), 0)
+              src = build / rel
+              if not src.is_file():
+                  raise SystemExit(f'missing build component: {rel}')
+              end = addr + src.stat().st_size
+              for p0, p1, label in protected:
+                  if addr < p1 and end > p0:
+                      raise SystemExit(f'SAFETY FAIL: {src.name} 0x{addr:x}..0x{end:x} overlaps {label}')
+              dst = pkg / src.name
+              shutil.copy2(src, dst)
+              rewritten[str(addr_text)] = src.name
+              sha = hashlib.sha256(dst.read_bytes()).hexdigest()
+              hashes[src.name] = sha
+              flash_map.append({'address': f'0x{addr:x}', 'file': src.name, 'size': dst.stat().st_size, 'sha256': sha})
+
+          # The partition table must be part of the flash payload and the new
+          # nonce_state partition must never have an initialization image.
+          if not any(x['address'].lower() == '0x8000' for x in flash_map):
+              raise SystemExit('partition-table flash entry missing')
+          if any(x['file'] == 'nonce_state.bin' for x in flash_map):
+              raise SystemExit('nonce_state must not be preflashed')
+
+          data['flash_files'] = rewritten
+          (pkg / 'flasher_args.json').write_text(json.dumps(data, indent=2), encoding='utf-8')
+
+          manifest = {
+              'firmware_version': '2.1.9',
+              'firmware_name': 'VS-ESP-IDF-V2.1.9-OIM3-PRODUCTION',
+              'target': 'esp32',
+              'esp_idf': 'v6.1',
+              'behavior': {
+                  'configured_poweron_discovery_seconds': 30,
+                  'unconfigured_discovery_seconds': 120,
+                  'configured_post_client_hard_cap_seconds': 300,
+                  'unconfigured_post_client_hard_cap_seconds': 600,
+                  'deep_sleep_wake_opens_provisioning': False,
+                  'nonce_persistence': ['nvs', 'nonce_state'],
+                  'nonce_spiffs_dependency': False,
+                  'rtc_slow_clock': 'INT_RC',
+                  'compiler_optimization': 'size',
+                  'default_log_level': 'WARN',
+              },
+              'protected_not_flashed': {
+                  'factory_data': '0x12000..0x17fff',
+                  'nonce_state': '0x18000..0x1ffff',
+                  'storage': '0x320000..0x3fffff',
+              },
+              'flash_map': flash_map,
+              'sha256': hashes,
+          }
+          (pkg / 'visionsen_firmware_manifest.json').write_text(json.dumps(manifest, indent=2), encoding='utf-8')
+          (pkg / 'FLASH_README.txt').write_text(
+              'VisionSen OIM3 v2.1.9 Production Hardening\n\n'
+              'Use the Factory PC Tool firmware selector with this ZIP.\n'
+              'IMPORTANT: Do NOT run erase-flash on provisioned production devices.\n'
+              'The release intentionally does not write factory_data, nonce_state, or storage.\n'
+              'The partition table is updated to define nonce_state at 0x18000.\n',
+              encoding='utf-8')
+
+          fwzip = out / 'VisionSen-OIM3-v2.1.9-Production-Full-Flash.zip'
+          with zipfile.ZipFile(fwzip, 'w', zipfile.ZIP_DEFLATED) as z:
+              for p in sorted(pkg.iterdir()):
+                  z.write(p, p.name)
+
+          srczip = out / 'VisionSen-OIM3-IDF-v2.1.9-Production-source.zip'
+          with zipfile.ZipFile(srczip, 'w', zipfile.ZIP_DEFLATED) as z:
+              for p in root.rglob('*'):
+                  if not p.is_file():
+                      continue
+                  rel = p.relative_to(root)
+                  if 'build' in rel.parts or '__pycache__' in rel.parts or p.suffix == '.pyc':
+                      continue
+                  z.write(p, Path(root.name) / rel)
+
+          sums = []
+          for p in (fwzip, srczip):
+              sha = hashlib.sha256(p.read_bytes()).hexdigest()
+              sums.append(f'{sha}  {p.name}')
+              print(p.name, p.stat().st_size, sha)
+          (out / 'SHA256SUMS.txt').write_text('\n'.join(sums) + '\n', encoding='utf-8')
+
+      - name: Upload v2.1.9 release artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: VisionSen-OIM3-v2.1.9-Production-Hardening
+          path: out/
+          if-no-files-found: error
+          retention-days: 30
