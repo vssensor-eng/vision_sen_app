@@ -1,0 +1,2 @@
+Trigger ESP-IDF v6.1 build for VisionSen OIM3 v2.1.10.
+Source SHA-256: 402a28487cc01cc6e31f0e5eb9b8b1d02b8bc416c8e2e149692869edd0f2b88d
