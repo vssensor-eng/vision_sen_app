@@ -1,0 +1,81 @@
+name: OIM3 v2.1.12 Build
+
+on:
+  push:
+    branches:
+      - oim3-build-v2.1.12
+    paths:
+      - 'oim3-build/v2.1.12/**'
+      - '.github/workflows/oim3-v2.1.12-build.yml'
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout v2.1.12 build branch
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Reconstruct verified v2.1.11 source and apply v2.1.12 manifest patch
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch origin oim3-build-v2.1.10:refs/remotes/origin/oim3-build-v2.1.10
+          git checkout origin/oim3-build-v2.1.10 -- oim3-build/v2.1.10/source3
+          rm -rf oim3-build/v2.1.12/project
+          mkdir -p /tmp/oim3-src oim3-build/v2.1.12/project
+          cat oim3-build/v2.1.10/source3/part-*.b64 | base64 -d > /tmp/oim3-src/source.tar.xz
+          echo '402a28487cc01cc6e31f0e5eb9b8b1d02b8bc416c8e2e149692869edd0f2b88d  /tmp/oim3-src/source.tar.xz' | sha256sum -c -
+          tar -xJf /tmp/oim3-src/source.tar.xz -C oim3-build/v2.1.12/project
+          cat oim3-build/v2.1.11/script/part-*.b64 | base64 -d > /tmp/apply_v211.py
+          python3 -m py_compile /tmp/apply_v211.py
+          (cd oim3-build/v2.1.12/project && python3 /tmp/apply_v211.py)
+          (cd oim3-build/v2.1.12/project && python3 ../../v2.1.11/postfix.py)
+          (cd oim3-build/v2.1.12/project && patch -p1 < ../v211-to-v212.patch)
+          sed -i 's/V2\.1\.11/V2.1.12/g; s/v2\.1\.11/v2.1.12/g' oim3-build/v2.1.12/project/README.md
+          grep -F 'set(PROJECT_VER "2.1.12")' oim3-build/v2.1.12/project/CMakeLists.txt
+          grep -F 'FIRMWARE_VERSION = "2.1.12"' oim3-build/v2.1.12/project/components/oim_board/include/oim_board.hpp
+          grep -F 'PROVISION_PROTOCOL_VERSION = 4' oim3-build/v2.1.12/project/components/oim_board/include/oim_board.hpp
+          (cd oim3-build/v2.1.12/project && python3 tools/validate_final.py)
+          echo 'BASE_SOURCE_SHA256=402a28487cc01cc6e31f0e5eb9b8b1d02b8bc416c8e2e149692869edd0f2b88d' >> "$GITHUB_ENV"
+
+      - name: Build ESP32 firmware with ESP-IDF v6.1
+        uses: espressif/esp-idf-ci-action@v1
+        with:
+          esp_idf_version: v6.1
+          target: esp32
+          path: oim3-build/v2.1.12/project
+          command: idf.py build
+
+      - name: Collect PC Tool binaries
+        shell: bash
+        run: |
+          set -euo pipefail
+          P='oim3-build/v2.1.12/project/build'
+          A='oim3-build/v2.1.12/artifact'
+          mkdir -p "$A"
+          test -s "$P/bootloader/bootloader.bin"
+          test -s "$P/partition_table/partition-table.bin"
+          test -s "$P/ota_data_initial.bin"
+          test -s "$P/visionsen_oim3.bin"
+          cp "$P/bootloader/bootloader.bin" "$A/bootloader.bin"
+          cp "$P/partition_table/partition-table.bin" "$A/partition-table.bin"
+          cp "$P/ota_data_initial.bin" "$A/ota_data_initial.bin"
+          cp "$P/visionsen_oim3.bin" "$A/visionsen_oim3.bin"
+          if [ -f "$P/flasher_args.json" ]; then cp "$P/flasher_args.json" "$A/build-flasher_args.json"; fi
+          sha256sum "$A"/*.bin | sed "s#$A/##" > "$A/SHA256SUMS.txt"
+          printf 'baseline_source_sha256=%s\nesp_idf=v6.1\ntarget=esp32\nproject_version=2.1.12\nfirmware_name=VS-ESP-IDF-V2.1.12-OIM3-PRODUCTION\nmanifest_schema=1\nprovision_protocol=4\n' "$BASE_SOURCE_SHA256" > "$A/BUILD_INFO.txt"
+          strings "$A/visionsen_oim3.bin" | grep -F 'VS-ESP-IDF-V2.1.12-OIM3-PRODUCTION'
+          ls -lh "$A"
+
+      - name: Upload PC Tool build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: VisionSen-OIM3-v2.1.12-build
+          path: oim3-build/v2.1.12/artifact/
+          if-no-files-found: error
+          retention-days: 30
