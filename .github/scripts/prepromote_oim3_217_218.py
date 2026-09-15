@@ -36,7 +36,7 @@ p.write_text(s)
 # Pre-clean the old release checklist wording so the v2.1.9 source artifact cannot
 # describe the retired SPIFFS nonce mirror as current behavior.
 p=root/'FINAL_RELEASE_CHECKLIST.md'; s=p.read_text()
-old='AES-GCM nonce high-water remains dual-persisted in NVS + SPIFFS; if the next nonce range cannot be durably committed to both stores, OIM3 send fails closed instead of risking nonce reuse.'
-new='AES-GCM nonce high-water is dual-persisted in normal `nvs` + dedicated `nonce_state`; if the next nonce range cannot be durably committed to both NVS domains, OIM3 send fails closed instead of risking nonce reuse.'
+old='AES-GCM nonce high-water remains dual-persisted in NVS + SPIFFS. If a new nonce block cannot be committed to both stores, sending must stop rather than risk nonce reuse.'
+new='AES-GCM nonce high-water is dual-persisted in normal `nvs` + dedicated `nonce_state`. If a new nonce block cannot be committed to both NVS domains, sending must stop rather than risk nonce reuse.'
 if old not in s: raise SystemExit('release checklist nonce wording missing')
 p.write_text(s.replace(old,new,1))
