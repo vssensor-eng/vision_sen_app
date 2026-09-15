@@ -36,7 +36,6 @@ jobs:
           (cd oim3-build/v2.1.12/project && python3 /tmp/apply_v211.py)
           (cd oim3-build/v2.1.12/project && python3 ../../v2.1.11/postfix.py)
           (cd oim3-build/v2.1.12/project && patch -p1 < ../v211-to-v212.patch)
-          sed -i 's/V2\.1\.11/V2.1.12/g; s/v2\.1\.11/v2.1.12/g' oim3-build/v2.1.12/project/README.md
           grep -F 'set(PROJECT_VER "2.1.12")' oim3-build/v2.1.12/project/CMakeLists.txt
           grep -F 'FIRMWARE_VERSION = "2.1.12"' oim3-build/v2.1.12/project/components/oim_board/include/oim_board.hpp
           grep -F 'PROVISION_PROTOCOL_VERSION = 4' oim3-build/v2.1.12/project/components/oim_board/include/oim_board.hpp
