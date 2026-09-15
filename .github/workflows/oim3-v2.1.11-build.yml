@@ -37,7 +37,26 @@ jobs:
           grep -F 'set(PROJECT_VER "2.1.11")' oim3-build/v2.1.11/project/CMakeLists.txt
           grep -F 'FIRMWARE_VERSION = "2.1.11"' oim3-build/v2.1.11/project/components/oim_board/include/oim_board.hpp
           ! grep -R -F "canonicalize_server_url',e_server_url" oim3-build/v2.1.11/project/components
-          (cd oim3-build/v2.1.11/project && python3 tools/validate_final.py)
+          cat >/tmp/oim3_protocol_smoke.cpp <<'CPP'
+          #include <cassert>
+          #include <string>
+          #include "oim_protocol.hpp"
+          int main() {
+              using namespace oim::protocol;
+              assert(channel_id_valid("T1", 15));
+              assert(channel_id_valid("PM251", 15));
+              assert(!channel_id_valid("PT1", 15));
+              assert(!channel_id_valid("T0", 15));
+              std::string out;
+              assert(canonicalize_server_url("HTTPS://Firma.COM:443/wp-json/oim/v1/ingest///", out));
+              assert(out == "https://firma.com/wp-json/oim/v1/ingest");
+              assert(!canonicalize_server_url("http://firma.com/x", out));
+              return 0;
+          }
+          CPP
+          g++ -std=c++17 -Wall -Wextra -Werror -I oim3-build/v2.1.11/project/components/oim_protocol/include /tmp/oim3_protocol_smoke.cpp -o /tmp/oim3_protocol_smoke
+          /tmp/oim3_protocol_smoke
+          echo 'protocol host C++ smoke: PASS'
           echo 'BASE_SOURCE_SHA256=402a28487cc01cc6e31f0e5eb9b8b1d02b8bc416c8e2e149692869edd0f2b88d' >> "$GITHUB_ENV"
 
       - name: Build ESP32 firmware with ESP-IDF v6.1
