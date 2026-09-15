@@ -1,0 +1,170 @@
+name: Build OIM3 v2.1.10 Full Flash
+
+on:
+  push:
+    branches:
+      - oim3-build-v2.1.10
+    paths:
+      - '.github/workflows/oim3-build-v2.1.10.yml'
+      - 'oim3-build/v2.1.10/**'
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    container:
+      image: espressif/idf:v6.1
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Reconstruct source archive
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/oim3-src
+          cat oim3-build/v2.1.10/source3/part-*.b64 > /tmp/oim3-source.b64
+          base64 -d /tmp/oim3-source.b64 > /tmp/oim3-source.tar.xz
+          tar -xJf /tmp/oim3-source.tar.xz -C /tmp/oim3-src
+          PROJECT_DIR="$(find /tmp/oim3-src -maxdepth 3 -type f -name partitions.csv -printf '%h\n' | head -n1)"
+          test -n "$PROJECT_DIR"
+          test -f "$PROJECT_DIR/CMakeLists.txt"
+          grep -q 'PROJECT_VER "2.1.10"' "$PROJECT_DIR/CMakeLists.txt"
+          echo "PROJECT_DIR=$PROJECT_DIR" >> "$GITHUB_ENV"
+          echo "Project: $PROJECT_DIR"
+
+      - name: Build with ESP-IDF 6.1
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd "$PROJECT_DIR"
+          idf.py --version
+          idf.py set-target esp32
+          idf.py build
+          test -f build/bootloader/bootloader.bin
+          test -f build/partition_table/partition-table.bin
+          test -f build/ota_data_initial.bin
+          test -f build/visionsen_oim3.bin
+
+      - name: Package PC Tool Full Flash ZIP
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import hashlib, json, os, pathlib, shutil, zipfile
+
+          project = pathlib.Path(os.environ['PROJECT_DIR'])
+          build = project / 'build'
+          dist = pathlib.Path('/tmp/oim3-dist')
+          dist.mkdir(parents=True, exist_ok=True)
+
+          files = {
+              'bootloader.bin': build / 'bootloader' / 'bootloader.bin',
+              'partition-table.bin': build / 'partition_table' / 'partition-table.bin',
+              'ota_data_initial.bin': build / 'ota_data_initial.bin',
+              'visionsen_oim3.bin': build / 'visionsen_oim3.bin',
+          }
+          for name, src in files.items():
+              if not src.is_file():
+                  raise SystemExit(f'Missing build output: {src}')
+              shutil.copy2(src, dist / name)
+
+          def sha256(path):
+              h = hashlib.sha256()
+              with open(path, 'rb') as f:
+                  for chunk in iter(lambda: f.read(1024 * 1024), b''):
+                      h.update(chunk)
+              return h.hexdigest()
+
+          flasher_args = {
+              'write_flash_args': ['--flash-mode','dio','--flash-size','4MB','--flash-freq','40m'],
+              'flash_settings': {'flash_mode':'dio','flash_size':'4MB','flash_freq':'40m'},
+              'flash_files': {
+                  '0x1000':'bootloader.bin',
+                  '0x8000':'partition-table.bin',
+                  '0x10000':'ota_data_initial.bin',
+                  '0x20000':'visionsen_oim3.bin'
+              },
+              'bootloader': {'offset':'0x1000','file':'bootloader/bootloader.bin','encrypted':'false'},
+              'partition-table': {'offset':'0x8000','file':'partition_table/partition-table.bin','encrypted':'false'},
+              'otadata': {'offset':'0x10000','file':'ota_data_initial.bin','encrypted':'false'},
+              'app': {'offset':'0x20000','file':'visionsen_oim3.bin','encrypted':'false'},
+              'extra_esptool_args': {'after':'hard-reset','before':'default-reset','stub':True,'chip':'esp32'}
+          }
+          (dist/'flasher_args.json').write_text(json.dumps(flasher_args, indent=2) + '\n', encoding='utf-8')
+
+          flash_map = []
+          addresses = {
+              'bootloader.bin':'0x1000',
+              'partition-table.bin':'0x8000',
+              'ota_data_initial.bin':'0x10000',
+              'visionsen_oim3.bin':'0x20000',
+          }
+          sums = {}
+          for name in addresses:
+              p = dist / name
+              digest = sha256(p)
+              sums[name] = digest
+              flash_map.append({'address': addresses[name], 'file': name, 'size': p.stat().st_size, 'sha256': digest})
+
+          manifest = {
+              'firmware_version':'2.1.10',
+              'firmware_name':'VS-ESP-IDF-V2.1.10-OIM3-PRODUCTION',
+              'target':'esp32',
+              'esp_idf':'v6.1',
+              'behavior': {
+                  'configured_poweron_discovery_seconds':30,
+                  'unconfigured_discovery_seconds':120,
+                  'configured_post_client_hard_cap_seconds':300,
+                  'unconfigured_post_client_hard_cap_seconds':600,
+                  'deep_sleep_wake_opens_provisioning':False,
+                  'nonce_persistence':['nvs','nonce_state'],
+                  'nonce_spiffs_dependency':False,
+                  'network_backoff_predicate_side_effect_free':True,
+                  'rtc_slow_clock':'INT_RC',
+                  'compiler_optimization':'size',
+                  'default_log_level':'WARN',
+                  'endpoint_canonicalization':True,
+                  'oim3_channel_contract':'strict-prefix-instance',
+                  'desired_config_signed_sync':True,
+                  'configurable_ntp_servers':True
+              },
+              'protected_not_flashed': {
+                  'factory_data':'0x12000..0x17fff',
+                  'nonce_state':'0x18000..0x1ffff',
+                  'storage':'0x320000..0x3fffff'
+              },
+              'flash_map': flash_map,
+              'sha256': sums
+          }
+          (dist/'visionsen_firmware_manifest.json').write_text(json.dumps(manifest, indent=2) + '\n', encoding='utf-8')
+          (dist/'FLASH_README.txt').write_text(
+              'VisionSen OIM3 v2.1.10 Production Full Flash\n'
+              'Factory PC Tool ile dogrudan yuklenir.\n'
+              'factory_data, nonce_state ve storage bolumleri flash edilmez.\n',
+              encoding='utf-8'
+          )
+
+          out = pathlib.Path(os.environ['GITHUB_WORKSPACE']) / 'VisionSen-OIM3-v2.1.10-Production-Full-Flash.zip'
+          with zipfile.ZipFile(out, 'w', compression=zipfile.ZIP_DEFLATED, compresslevel=9) as z:
+              for name in ['FLASH_README.txt','bootloader.bin','flasher_args.json','ota_data_initial.bin','partition-table.bin','visionsen_firmware_manifest.json','visionsen_oim3.bin']:
+                  z.write(dist/name, arcname=name)
+
+          with zipfile.ZipFile(out) as z:
+              m = json.loads(z.read('visionsen_firmware_manifest.json'))
+              assert m['firmware_version'] == '2.1.10'
+              for entry in m['flash_map']:
+                  data = z.read(entry['file'])
+                  assert len(data) == entry['size']
+                  assert hashlib.sha256(data).hexdigest() == entry['sha256']
+          print(out)
+          print('ZIP SHA256:', sha256(out))
+          PY
+
+      - name: Upload Full Flash artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: VisionSen-OIM3-v2.1.10-Production-Full-Flash
+          path: VisionSen-OIM3-v2.1.10-Production-Full-Flash.zip
+          if-no-files-found: error
+          retention-days: 30
