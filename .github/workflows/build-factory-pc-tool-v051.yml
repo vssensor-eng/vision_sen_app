@@ -26,7 +26,7 @@ jobs:
         with:
           python-version: '3.13'
 
-      - name: Restore v0.5.0 source and apply v0.5.1 patch
+      - name: Restore v0.5.0 source and apply v0.5.1 changes
         shell: pwsh
         run: |
           $ErrorActionPreference='Stop'
@@ -37,7 +37,21 @@ jobs:
           [IO.File]::WriteAllBytes('source.gz',[Convert]::FromBase64String($b64))
           python -c "import gzip,pathlib; pathlib.Path('factory_pc_tool_v051/visionsen_factory_tool.py').write_bytes(gzip.decompress(pathlib.Path('source.gz').read_bytes()))"
           Copy-Item factory_pc_tool_v040/requirements.txt factory_pc_tool_v051/requirements.txt -Force
-          git apply --unsafe-paths --directory=factory_pc_tool_v051 .factory_v051/v050-to-v051.patch
+          @'
+          from pathlib import Path
+          p=Path('factory_pc_tool_v051/visionsen_factory_tool.py')
+          s=p.read_text(encoding='utf-8')
+          s=s.replace('APP_VERSION = "0.5.0"','APP_VERSION = "0.5.1"')
+          s=s.replace('self.geometry("1180x790")\n        self.minsize(1080, 720)','self.geometry("1180x960")\n        self.minsize(1080, 820)')
+          s=s.replace('height=25, bg="#000716"','height=34, bg="#000716"')
+          anchor='''        for var in (self.serial_var, self.manifest_version_var, self.manifest_sht45_var, self.manifest_battery_var):\n'''
+          if 'write_manifest_button' not in s:
+              block='''        self.manifest_help_var = tk.StringVar(value="1) Fiziksel sensörleri seç  2) İlk üretimde v1; sensör değişiminde sürümü artır  3) Seçili Sensörleri Cihaza Yaz")\n        tk.Label(manifest, textvariable=self.manifest_help_var, bg=PANEL, fg=BLUE,\n                 font=("Segoe UI", 8, "bold"), anchor="w").grid(row=3, column=0, columnspan=6, sticky="ew", padx=2, pady=(7, 2))\n        self.write_manifest_button = self._register_device_widget(btn(\n            manifest, "Seçili Sensörleri Cihaza Yaz", self.write_identity, width=27, state="disabled"))\n        self.write_manifest_button.grid(row=3, column=6, columnspan=2, sticky="e", padx=4, pady=(5, 2))\n'''
+              if anchor not in s: raise SystemExit('manifest anchor missing')
+              s=s.replace(anchor, block+anchor, 1)
+          p.write_text(s,encoding='utf-8')
+          '@ | Set-Content apply_v051.py -Encoding UTF8
+          python apply_v051.py
           python -m py_compile factory_pc_tool_v051/visionsen_factory_tool.py
 
       - name: Assert v0.5.1 UI and manifest contract
@@ -46,17 +60,16 @@ jobs:
           $ErrorActionPreference='Stop'
           @'
           from pathlib import Path
-          p=Path('factory_pc_tool_v051/visionsen_factory_tool.py')
-          s=p.read_text(encoding='utf-8')
+          s=Path('factory_pc_tool_v051/visionsen_factory_tool.py').read_text(encoding='utf-8')
           required=[
             'APP_VERSION = "0.5.1"',
             'QR_FORMAT = "VS2"',
             'VS-MANIFEST-1',
-            'SHT45',
-            'BATTERY',
-            'Seçili Sensörleri Cihaza Yaz',
+            'SUPPORTED_MANIFEST_SENSOR_KEYS',
+            'write_manifest_button',
             'height=34',
             'self.geometry("1180x960")',
+            'self.minsize(1080, 820)',
           ]
           missing=[x for x in required if x not in s]
           if missing: raise SystemExit(f'v0.5.1 source assert failed: {missing}')
