@@ -1,0 +1,363 @@
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -1,5 +1,5 @@
+ cmake_minimum_required(VERSION 3.22)
+ 
+-set(PROJECT_VER "2.1.11")
++set(PROJECT_VER "2.1.12")
+ include($ENV{IDF_PATH}/tools/cmake/project.cmake)
+ project(visionsen_oim3)
+--- a/components/oim_board/include/oim_board.hpp
++++ b/components/oim_board/include/oim_board.hpp
+@@ -2,10 +2,10 @@
+ 
+ namespace oim::board {
+ 
+-inline constexpr const char *FIRMWARE_VERSION = "2.1.11";
+-inline constexpr const char *FIRMWARE_NAME = "VS-ESP-IDF-V2.1.11-OIM3-PRODUCTION";
++inline constexpr const char *FIRMWARE_VERSION = "2.1.12";
++inline constexpr const char *FIRMWARE_NAME = "VS-ESP-IDF-V2.1.12-OIM3-PRODUCTION";
+ inline constexpr const char *DEVICE_TYPE = "environment_monitor";
+-inline constexpr unsigned PROVISION_PROTOCOL_VERSION = 3;
++inline constexpr unsigned PROVISION_PROTOCOL_VERSION = 4;
+ 
+ // V1.3.8 ile aynı gerçek kart pinleri.
+ inline constexpr int SDA_PIN = 4;
+--- a/components/oim_factory/include/oim_factory.hpp
++++ b/components/oim_factory/include/oim_factory.hpp
+@@ -3,9 +3,25 @@
+ #include <cstddef>
+ #include <cstdint>
+ #include <string>
++#include <vector>
+ 
+ namespace oim::factory {
+ 
++
++struct ManifestSensor {
++    std::string driver;
++    uint8_t instance{1};
++};
++
++struct DeviceManifest {
++    std::string serial;
++    uint32_t version{1};
++    std::string hash;
++    std::vector<ManifestSensor> sensors;
++    bool valid{false};
++    bool legacy_default{false};
++};
++
+ struct Identity {
+     std::string serial;
+     std::string hardware_id;
+@@ -22,6 +38,8 @@
+ bool load();
+ bool ready();
+ Identity current();
++DeviceManifest manifest();
++bool sensor_enabled(const char *driver, uint8_t instance = 1);
+ 
+ // Product serial format accepted by production tooling and firmware.
+ // Examples: ESP-001, ESP-000001. Prefix is fixed and suffix is numeric.
+@@ -37,6 +55,14 @@
+ 
+ inline constexpr const char *PARTITION_LABEL = "factory_data";
+ inline constexpr const char *NAMESPACE = "identity";
++inline constexpr const char *MANIFEST_NAMESPACE = "manifest";
++inline constexpr const char *MANIFEST_SERIAL_KEY = "serial";
++inline constexpr const char *MANIFEST_VERSION_KEY = "version";
++inline constexpr const char *MANIFEST_SENSORS_KEY = "sensors";
++inline constexpr const char *MANIFEST_HASH_KEY = "hash";
++inline constexpr uint32_t MANIFEST_SCHEMA_VERSION = 1;
++inline constexpr std::size_t MAX_MANIFEST_SENSORS_BYTES = 128;
++inline constexpr std::size_t MANIFEST_HASH_HEX_BYTES = 64;
+ inline constexpr const char *SERIAL_KEY = "serial";
+ inline constexpr const char *HW_REV_KEY = "hwrev";
+ inline constexpr const char *PRODUCTION_DATE_KEY = "prod_date";
+--- a/components/oim_factory/oim_factory.cpp
++++ b/components/oim_factory/oim_factory.cpp
+@@ -14,6 +14,7 @@
+ namespace {
+ constexpr const char *TAG = "oim_factory";
+ Identity g_identity{};
++DeviceManifest g_manifest{};
+ bool g_partition_initialized = false;
+ 
+ bool nvs_get_string(nvs_handle_t handle, const char *key, std::string &out,
+@@ -53,6 +54,93 @@
+     }
+     return true;
+ }
++
++bool valid_hash_hex(const std::string &value)
++{
++    if (value.size() != MANIFEST_HASH_HEX_BYTES) return false;
++    for (unsigned char c : value) {
++        if (!std::isxdigit(c)) return false;
++    }
++    return true;
++}
++
++bool parse_manifest_sensors(const std::string &raw, std::vector<ManifestSensor> &out)
++{
++    out.clear();
++    if (raw.empty() || raw.size() > MAX_MANIFEST_SENSORS_BYTES) return false;
++    std::size_t start = 0;
++    while (start < raw.size()) {
++        const std::size_t comma = raw.find(',', start);
++        const std::string item = raw.substr(start, comma == std::string::npos ? std::string::npos : comma - start);
++        const std::size_t colon = item.find(':');
++        if (colon == std::string::npos || colon == 0U || colon + 1U >= item.size()) return false;
++        const std::string driver = item.substr(0, colon);
++        const std::string inst = item.substr(colon + 1U);
++        if (inst != "1") return false;
++        if (driver != "SHT45" && driver != "BATTERY") return false;
++        for (const auto &existing : out) {
++            if (existing.driver == driver && existing.instance == 1U) return false;
++        }
++        out.push_back(ManifestSensor{driver, 1U});
++        if (comma == std::string::npos) break;
++        start = comma + 1U;
++    }
++    return !out.empty();
++}
++
++void use_legacy_default_manifest()
++{
++    g_manifest = DeviceManifest{};
++    g_manifest.serial = g_identity.serial;
++    g_manifest.version = 1U;
++    g_manifest.sensors = {ManifestSensor{"SHT45", 1U}, ManifestSensor{"BATTERY", 1U}};
++    g_manifest.valid = true;
++    g_manifest.legacy_default = true;
++    ESP_LOGW(TAG, "Factory manifest missing; using legacy SHT45:1,BATTERY:1 fallback for serial=%s",
++             g_manifest.serial.c_str());
++}
++
++bool load_manifest()
++{
++    g_manifest = DeviceManifest{};
++    nvs_handle_t handle{};
++    const esp_err_t open_err = nvs_open_from_partition(
++        PARTITION_LABEL, MANIFEST_NAMESPACE, NVS_READONLY, &handle);
++    if (open_err == ESP_ERR_NVS_NOT_FOUND) {
++        use_legacy_default_manifest();
++        return true;
++    }
++    if (open_err != ESP_OK) {
++        ESP_LOGE(TAG, "Factory manifest open failed: %s", esp_err_to_name(open_err));
++        return false;
++    }
++
++    uint32_t schema = 0;
++    uint32_t version = 0;
++    std::string sensors_raw;
++    const bool read_ok =
++        nvs_get_u32(handle, "schema", &schema) == ESP_OK &&
++        schema == MANIFEST_SCHEMA_VERSION &&
++        nvs_get_string(handle, MANIFEST_SERIAL_KEY, g_manifest.serial, true, MAX_SERIAL_BYTES) &&
++        nvs_get_u32(handle, MANIFEST_VERSION_KEY, &version) == ESP_OK && version >= 1U &&
++        nvs_get_string(handle, MANIFEST_SENSORS_KEY, sensors_raw, true, MAX_MANIFEST_SENSORS_BYTES) &&
++        nvs_get_string(handle, MANIFEST_HASH_KEY, g_manifest.hash, true, MANIFEST_HASH_HEX_BYTES);
++    nvs_close(handle);
++
++    if (!read_ok || g_manifest.serial != g_identity.serial ||
++        !parse_manifest_sensors(sensors_raw, g_manifest.sensors) ||
++        !valid_hash_hex(g_manifest.hash)) {
++        ESP_LOGE(TAG, "Factory manifest invalid or serial mismatch; customer operation blocked");
++        return false;
++    }
++    g_manifest.version = version;
++    g_manifest.valid = true;
++    g_manifest.legacy_default = false;
++    ESP_LOGI(TAG, "Factory manifest: serial=%s version=%lu sensors=%s hash=%s",
++             g_manifest.serial.c_str(), static_cast<unsigned long>(g_manifest.version),
++             sensors_raw.c_str(), g_manifest.hash.c_str());
++    return true;
++}
+ } // namespace
+ 
+ bool is_valid_serial(const std::string &serial)
+@@ -134,6 +222,10 @@
+              g_identity.hardware_revision.empty() ? "-" : g_identity.hardware_revision.c_str(),
+              g_identity.production_date.empty() ? "-" : g_identity.production_date.c_str(),
+              PARTITION_LABEL);
++    if (!load_manifest()) {
++        g_identity.valid = false;
++        return false;
++    }
+     return true;
+ }
+ 
+@@ -147,4 +239,18 @@
+     return g_identity;
+ }
+ 
++DeviceManifest manifest()
++{
++    return g_manifest;
++}
++
++bool sensor_enabled(const char *driver, uint8_t instance)
++{
++    if (!driver || !g_manifest.valid) return false;
++    for (const auto &sensor : g_manifest.sensors) {
++        if (sensor.instance == instance && sensor.driver == driver) return true;
++    }
++    return false;
++}
++
+ } // namespace oim::factory
+--- a/components/oim_provision/oim_provision.cpp
++++ b/components/oim_provision/oim_provision.cpp
+@@ -159,6 +159,25 @@
+     cJSON_AddStringToObject(doc, "hw_id", identity.hardware_id.c_str());
+     cJSON_AddStringToObject(doc, "hardware_revision", identity.hardware_revision.c_str());
+     cJSON_AddStringToObject(doc, "production_date", identity.production_date.c_str());
++    const auto manifest = oim::factory::manifest();
++    cJSON *manifest_json = cJSON_AddObjectToObject(doc, "manifest");
++    if (manifest_json) {
++        cJSON_AddNumberToObject(manifest_json, "schema", oim::factory::MANIFEST_SCHEMA_VERSION);
++        cJSON_AddStringToObject(manifest_json, "serial", manifest.serial.c_str());
++        cJSON_AddNumberToObject(manifest_json, "version", manifest.version);
++        cJSON_AddStringToObject(manifest_json, "hash", manifest.hash.c_str());
++        cJSON_AddBoolToObject(manifest_json, "legacy_default", manifest.legacy_default);
++        cJSON *sensors = cJSON_AddArrayToObject(manifest_json, "sensors");
++        if (sensors) {
++            for (const auto &sensor : manifest.sensors) {
++                cJSON *item = cJSON_CreateObject();
++                if (!item) continue;
++                cJSON_AddStringToObject(item, "driver", sensor.driver.c_str());
++                cJSON_AddNumberToObject(item, "instance", sensor.instance);
++                cJSON_AddItemToArray(sensors, item);
++            }
++        }
++    }
+     const std::string device_name = effective_device_name(cfg);
+     cJSON_AddStringToObject(doc, "device_name", device_name.c_str());
+     cJSON_AddStringToObject(doc, "fw", oim::board::FIRMWARE_VERSION);
+--- a/components/oim_sensors/CMakeLists.txt
++++ b/components/oim_sensors/CMakeLists.txt
+@@ -3,6 +3,7 @@
+     INCLUDE_DIRS "include"
+     REQUIRES
+         oim_board
++        oim_factory
+         oim_protocol
+         esp_driver_i2c
+         esp_driver_gpio
+--- a/components/oim_sensors/oim_sensors.cpp
++++ b/components/oim_sensors/oim_sensors.cpp
+@@ -21,6 +21,7 @@
+ #include "freertos/task.h"
+ 
+ #include "oim_board.hpp"
++#include "oim_factory.hpp"
+ #include "oim_protocol.hpp"
+ 
+ namespace oim::sensors {
+@@ -554,13 +555,21 @@
+ 
+ bool init()
+ {
+-    bool all_ok = init_shared_i2c_bus();
+-    if (!all_ok) {
+-        ESP_LOGE(TAG, "Shared sensor-bus initialization failed");
+-        return false;
++    bool all_ok = true;
++    const bool sht45_enabled = oim::factory::sensor_enabled("SHT45", 1U);
++    if (sht45_enabled) {
++        all_ok = init_shared_i2c_bus();
++        if (!all_ok) {
++            ESP_LOGE(TAG, "Shared sensor-bus initialization failed");
++            return false;
++        }
+     }
+ 
+     for (const auto &driver : SENSOR_DRIVERS) {
++        if (!oim::factory::sensor_enabled(driver.name, 1U)) {
++            ESP_LOGI(TAG, "Physical sensor disabled by factory manifest: %s", driver.name);
++            continue;
++        }
+         const bool ok = driver.init ? driver.init() : true;
+         if (!ok) {
+             all_ok = false;
+@@ -574,9 +583,9 @@
+ {
+     MeasurementSnapshot snapshot{};
+ 
+-    snapshot.physical_sensor_count = static_cast<uint8_t>(
+-        sizeof(SENSOR_DRIVERS) / sizeof(SENSOR_DRIVERS[0]));
+     for (const auto &driver : SENSOR_DRIVERS) {
++        if (!oim::factory::sensor_enabled(driver.name, 1U)) continue;
++        ++snapshot.physical_sensor_count;
+         const bool ok = driver.read(snapshot);
+         if (ok) {
+             ++snapshot.physical_sensor_ok_count;
+@@ -586,9 +595,12 @@
+     }
+ 
+     // Power telemetry remains OIM3 metadata rather than consuming generic
+-    // sensor-channel IDs, preserving server compatibility.
+-    (void)read_battery(snapshot);
+-    snapshot.charging = read_charging();
++    // sensor-channel IDs, preserving server compatibility. It is sampled only
++    // when BATTERY:1 is present in the immutable factory manifest.
++    if (oim::factory::sensor_enabled("BATTERY", 1U)) {
++        (void)read_battery(snapshot);
++        snapshot.charging = read_charging();
++    }
+     finalize_snapshot_timing(snapshot);
+ 
+     return snapshot;
+--- a/tools/validate_final.py
++++ b/tools/validate_final.py
+@@ -1,5 +1,5 @@
+ #!/usr/bin/env python3
+-"""Release-gate invariants for VisionSen OIM3 V2.1.11 PRODUCTION HARDENING."""
++"""Release-gate invariants for VisionSen OIM3 V2.1.12 PRODUCTION HARDENING."""
+ from __future__ import annotations
+ import re
+ import json
+@@ -32,10 +32,10 @@
+     k, sep, v=item.partition("="); assert sep
+     return ((item in blob) or (f"# {k} is not set" in blob)) if v == "n" else (item in blob)
+ 
+-assert str_const("FIRMWARE_VERSION") == "2.1.11"
+-assert str_const("FIRMWARE_NAME") == "VS-ESP-IDF-V2.1.11-OIM3-PRODUCTION"
+-assert 'set(PROJECT_VER "2.1.11")' in PROJECT_CMAKE
+-assert "V2.1.11" in README
++assert str_const("FIRMWARE_VERSION") == "2.1.12"
++assert str_const("FIRMWARE_NAME") == "VS-ESP-IDF-V2.1.12-OIM3-PRODUCTION"
++assert 'set(PROJECT_VER "2.1.12")' in PROJECT_CMAKE
++assert "V2.1.12" in README
+ 
+ # Provisioning state machine: 30 s discovery for configured power-on, then a
+ # hard cap that cannot be refreshed by HTTP polling/activity.
+@@ -222,7 +222,24 @@
+ assert 'advance_network_backoff(oim::board::SENSOR_SAMPLE_INTERVAL_SECONDS);' in APP
+ assert 'const bool backoff_allows_network = oim::runtime::network_attempt_allowed();' in APP
+ 
+-print('V2.1.11 PRODUCTION HARDENING invariant validation: PASS')
++
++# v2.1.12 serial-bound Device Manifest invariants.
++factory_h=(ROOT/'components/oim_factory/include/oim_factory.hpp').read_text()
++factory_cpp=(ROOT/'components/oim_factory/oim_factory.cpp').read_text()
++sensors_cpp=(ROOT/'components/oim_sensors/oim_sensors.cpp').read_text()
++provision_cpp=(ROOT/'components/oim_provision/oim_provision.cpp').read_text()
++assert 'MANIFEST_SCHEMA_VERSION = 1' in factory_h
++assert 'MANIFEST_NAMESPACE = "manifest"' in factory_h
++assert 'sensor_enabled' in factory_h and 'legacy_default' in factory_h
++assert 'SHT45:1' in factory_cpp and 'BATTERY:1' in factory_cpp
++assert 'sensor_enabled("SHT45", 1U)' in sensors_cpp
++assert 'sensor_enabled("BATTERY", 1U)' in sensors_cpp
++assert '"manifest"' in provision_cpp and 'legacy_default' in provision_cpp
++board=(ROOT/'components/oim_board/include/oim_board.hpp').read_text()
++assert 'PROVISION_PROTOCOL_VERSION = 4' in board
++print('device manifest v1 invariants: PASS')
++
++print('V2.1.12 PRODUCTION HARDENING invariant validation: PASS')
+ print('protocol host C++ test: PASS')
+ print(f'queue={retention}/{physical}, sample={sample}s, network_budget={latest}+{http}+{tail}ms')
+ print('nonce persistence: default NVS + nonce_state NVS (SPIFFS-independent)')
