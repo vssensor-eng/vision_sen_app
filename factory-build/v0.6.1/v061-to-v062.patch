@@ -1,0 +1,142 @@
+--- a/visionsen_factory_tool.py
++++ b/visionsen_factory_tool.py
+@@ -54,7 +54,7 @@
+     nvsgen = None
+ 
+ APP_NAME = "VisionSen Factory Tool"
+-APP_VERSION = "0.6.1"
++APP_VERSION = "0.6.2"
+ BUILD_MARKER = "production-baseline-strict"
+ CONFIG_FILE = Path.home() / ".visionsen_factory_tool.json"
+ DEFAULT_REPORT = Path.home() / "VisionSenFactory" / "production_records.csv"
+@@ -1218,16 +1218,35 @@
+             raise RuntimeError("EXE içindeki firmware paketi bulunamadı.")
+         return p
+ 
+-    def _embedded_firmware_meta(self) -> dict[str, object]:
+-        fw = self._resource_root() / "firmware"
+-        manifest_path = fw / "visionsen_firmware_manifest.json"
++    def _approved_firmware_manifest(self) -> dict[str, object]:
++        manifest_path = self._firmware_dir() / "visionsen_firmware_manifest.json"
+         if not manifest_path.is_file():
+             raise RuntimeError("Gömülü firmware doğrulama manifesti bulunamadı.")
+         manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+         version = str(manifest.get("firmware_version") or "")
+         contract = str(manifest.get("system_contract") or "")
+-        if version != REQUIRED_FIRMWARE_VERSION or contract != SYSTEM_CONTRACT:
+-            raise RuntimeError(f"Gömülü firmware sözleşmesi uyumsuz: version={version or '—'} contract={contract or '—'}")
++        target = str(manifest.get("target") or "").lower()
++        if version != REQUIRED_FIRMWARE_VERSION or contract != SYSTEM_CONTRACT or target != "esp32":
++            raise RuntimeError(
++                f"Gömülü firmware sözleşmesi uyumsuz: version={version or '—'} "
++                f"contract={contract or '—'} target={target or '—'}"
++            )
++        hashes = manifest.get("sha256") or {}
++        required = ("bootloader.bin", "partition-table.bin", "ota_data_initial.bin", "visionsen_oim3.bin")
++        for name in required:
++            expected = str(hashes.get(name) or "").strip().lower()
++            if not re.fullmatch(r"[0-9a-f]{64}", expected):
++                raise RuntimeError(f"Gömülü firmware manifestinde SHA-256 eksik/geçersiz: {name}")
++        return manifest
++
++    def _approved_firmware_hashes(self) -> dict[str, str]:
++        manifest = self._approved_firmware_manifest()
++        return {str(k): str(v).strip().lower() for k, v in (manifest.get("sha256") or {}).items()}
++
++    def _embedded_firmware_meta(self) -> dict[str, object]:
++        manifest = self._approved_firmware_manifest()
++        version = str(manifest["firmware_version"])
++        contract = str(manifest["system_contract"])
+         return {
+             "kind": "embedded",
+             "version": version,
+@@ -1350,6 +1369,7 @@
+                 if version != REQUIRED_FIRMWARE_VERSION or contract != SYSTEM_CONTRACT:
+                     raise RuntimeError(f"Yalnız OIM3 {REQUIRED_FIRMWARE_VERSION} / {SYSTEM_CONTRACT} firmware kabul edilir.")
+                 hashes = manifest.get("sha256") or {}
++                approved_hashes = self._approved_firmware_hashes()
+                 for _, member_name, _ in components:
+                     base = Path(member_name).name
+                     expected = str(hashes.get(base) or "").lower()
+@@ -1358,6 +1378,12 @@
+                     actual = hashlib.sha256(zf.read(mapping[member_name])).hexdigest()
+                     if not secrets.compare_digest(actual, expected):
+                         raise RuntimeError(f"Firmware SHA-256 doğrulaması başarısız: {base}")
++                    approved = str(approved_hashes.get(base) or "")
++                    if not approved or not secrets.compare_digest(actual, approved):
++                        raise RuntimeError(
++                            f"{base} aynı sürüm numarasını taşısa da onaylı VisionSen final build ile eşleşmiyor. "
++                            "Gömülü firmware'i veya güncel Production-Final paketini kullanın."
++                        )
+                 return {
+                     "kind": "zip",
+                     "version": version,
+@@ -1395,6 +1421,13 @@
+         required_contract = SYSTEM_CONTRACT.encode("ascii")
+         if required_marker not in blob or required_contract not in blob:
+             raise RuntimeError(f"App BIN yalnız OIM3 {REQUIRED_FIRMWARE_VERSION} / {SYSTEM_CONTRACT} üretim baseline olmalıdır.")
++        actual_sha = hashlib.sha256(blob).hexdigest()
++        approved_sha = str(self._approved_firmware_hashes().get("visionsen_oim3.bin") or "")
++        if not approved_sha or not secrets.compare_digest(actual_sha, approved_sha):
++            raise RuntimeError(
++                "App BIN aynı 2.2.0 marker'ını taşısa da onaylı VisionSen final build ile eşleşmiyor. "
++                "Gömülü firmware'i veya güncel Production-Final BIN'i kullanın."
++            )
+         version = REQUIRED_FIRMWARE_VERSION
+         return {
+             "kind": "bin",
+@@ -1403,7 +1436,7 @@
+             "path": path,
+             "offset": offset,
+             "size": size,
+-            "sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
++            "sha256": actual_sha,
+         }
+ 
+     def select_firmware_file(self):
+--- a/tools/validate_production.py
++++ b/tools/validate_production.py
+@@ -10,7 +10,7 @@
+ fw = json.loads((R / 'firmware/visionsen_firmware_manifest.json').read_text(encoding='utf-8'))
+ 
+ checks = {
+-    'version': 'APP_VERSION = "0.6.1"' in s,
++    'version': 'APP_VERSION = "0.6.2"' in s,
+     'strict_contract': 'SYSTEM_CONTRACT = "VS-OIM3-STRICT-1"' in s,
+     'fw_version': 'REQUIRED_FIRMWARE_VERSION = "2.2.0"' in s,
+     'firmware_result_gate': 'if self.firmware != REQUIRED_FIRMWARE_VERSION:' in s,
+@@ -27,6 +27,11 @@
+     'secret_len': int(contract.get('provision_secret', {}).get('length') or 0) == 8,
+     'fw_manifest_version': fw.get('firmware_version') == '2.2.0',
+     'fw_manifest_contract': fw.get('system_contract') == 'VS-OIM3-STRICT-1',
++    'approved_manifest_gate': 'def _approved_firmware_manifest' in s and 'def _approved_firmware_hashes' in s,
++    'external_zip_exact_hash_gate': 'onaylı VisionSen final build ile eşleşmiyor' in s and 'approved_hashes = self._approved_firmware_hashes()' in s,
++    'external_bin_exact_hash_gate': 'approved_sha = str(self._approved_firmware_hashes().get("visionsen_oim3.bin")' in s,
++    'fw_manifest_target': str(fw.get('target') or '').lower() == 'esp32',
++    'fw_manifest_nonce': fw.get('nonce_mode') == 'counter-v1',
+ }
+ 
+ for name, expected in (fw.get('sha256') or {}).items():
+--- a/RELEASE_NOTES-v0.6.1.md
++++ /dev/null
+@@ -1,9 +0,0 @@
+-# VisionSen Factory PC Tool v0.6.1 – Production Final
+-
+-- Version bumped from 0.6.0 to 0.6.1.
+-- Firmware workflow aligned to the final OIM3 v2.2.0 production build.
+-- Embedded firmware now uses the CI-built final binary set and validated SHA-256 manifest.
+-- COM reconnect logic retains the physical USB identity and follows COM-port re-enumeration after ESP32 reset.
+-- The PC tool still protects `factory_data`, `nonce_state` and `storage/queue` during normal firmware flashing.
+-- Factory Identity + Device Manifest readback validation remains mandatory.
+-- The final Windows EXE is standalone and includes esptool/NVS tooling.
+--- /dev/null
++++ b/RELEASE_NOTES-v0.6.2.md
+@@ -0,0 +1,9 @@
++# VisionSen Factory PC Tool v0.6.2 – Production Final
++
++- Production release guard strengthened.
++- External Full-Flash ZIP is accepted only when every flash component SHA-256 exactly matches the embedded approved OIM3 2.2.0 final build.
++- External App-Only BIN is accepted only when its SHA-256 exactly matches the approved embedded `visionsen_oim3.bin`.
++- Same-version stale/pre-final firmware packages are rejected even when their own manifest is internally self-consistent.
++- Embedded firmware metadata restored to the complete ESP32 production manifest (`target=esp32`, IDF v6.1, VS2/protocol 4, factory identity schema 2, manifest schema 1, nonce counter-v1).
++- Protected regions remain: factory_data `0x12000..0x17fff`, nonce_state `0x18000..0x1ffff`, storage `0x320000..0x3fffff`.
