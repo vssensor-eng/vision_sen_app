@@ -151,11 +151,13 @@ jobs:
           set -euo pipefail
           APK="$MOBILE_ROOT/build/app/outputs/flutter-apk/app-release.apk"
           unzip -p "$APK" classes.dex > /tmp/classes.dex
-          unzip -p "$APK" AndroidManifest.xml > /tmp/AndroidManifest.binxml
           grep -aF 'connectProvisioningWifi' /tmp/classes.dex
           grep -aF 'getProvisioningCapabilities' /tmp/classes.dex
-          grep -aF 'CHANGE_NETWORK_STATE' /tmp/AndroidManifest.binxml
-          grep -aF 'NEARBY_WIFI_DEVICES' /tmp/AndroidManifest.binxml
+          AAPT="$(find "$ANDROID_HOME/build-tools" -type f -name aapt | sort -V | tail -n1)"
+          test -x "$AAPT"
+          "$AAPT" dump permissions "$APK" | tee /tmp/apk-permissions.txt
+          grep -F 'android.permission.CHANGE_NETWORK_STATE' /tmp/apk-permissions.txt
+          grep -F 'android.permission.NEARBY_WIFI_DEVICES' /tmp/apk-permissions.txt
           if grep -aF 'scanProvisioningWifi' /tmp/classes.dex; then
             echo 'Dead scanProvisioningWifi bridge found in APK'; exit 1
           fi
