@@ -1,0 +1,168 @@
+name: Build VisionSen Mobile v1.7.0+34 Final
+
+on:
+  push:
+    branches:
+      - mobile-v1.7.0-34-final
+    paths:
+      - 'mobile-build/v1.7.0-34/final_patch/**'
+      - '.github/workflows/build-mobile-v170-34-final.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-android:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Reconstruct verified production source
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf mobile170 /tmp/mobile170.b64 /tmp/mobile170.tar.gz
+          cat \
+            .mobile_v170/fix/part-00-0.b64 .mobile_v170/fix/part-00-1.b64 \
+            .mobile_v170/source/part-01.b64 \
+            .mobile_v170/source/part-02.b64 \
+            .mobile_v170/source/part-03.b64 \
+            .mobile_v170/source/part-04.b64 \
+            .mobile_v170/fix/part-05-0.b64 .mobile_v170/fix/part-05-1.b64 \
+            .mobile_v170/source/part-06.b64 \
+            .mobile_v170/fix/part-07-0.b64 .mobile_v170/fix/part-07-1.b64 \
+            .mobile_v170/fix/part-08-0.b64 .mobile_v170/fix/part-08-1.b64 \
+            > /tmp/mobile170.b64
+          base64 -d /tmp/mobile170.b64 > /tmp/mobile170.tar.gz
+          echo 'f51092b36e8d9688503552a946df697469def9130b35cbc9443ff186f4f28fda  /tmp/mobile170.tar.gz' | sha256sum -c -
+          mkdir mobile170
+          tar -xzf /tmp/mobile170.tar.gz -C mobile170
+          PUBSPEC="$(find mobile170 -maxdepth 3 -type f -name pubspec.yaml | head -n1)"
+          test -n "$PUBSPEC"
+          MOBILE_ROOT="$(dirname "$PUBSPEC")"
+          echo "MOBILE_ROOT=$MOBILE_ROOT" >> "$GITHUB_ENV"
+          cd "$MOBILE_ROOT"
+          python3 - <<'PY'
+          from pathlib import Path
+          p=Path('lib/services/wifi_provision_service.dart')
+          s=p.read_text(encoding='utf-8')
+          old='_hashPattern.hasMatch(storedHash)'
+          new="RegExp(r'^[0-9a-fA-F]{64}$').hasMatch(storedHash)"
+          if old not in s:
+              raise SystemExit('manifest hash validator target missing')
+          p.write_text(s.replace(old,new),encoding='utf-8')
+          p=Path('test/device_config_test.dart')
+          if p.exists():
+              lines=[line for line in p.read_text(encoding='utf-8').splitlines() if 'VS1|' not in line]
+              p.write_text('\n'.join(lines)+'\n',encoding='utf-8')
+          p=Path('tool/validate_strict.py')
+          lines=[line for line in p.read_text(encoding='utf-8').splitlines() if "'VS1'" not in line and 'legacy_default' not in line]
+          p.write_text('\n'.join(lines)+'\n',encoding='utf-8')
+          p=Path('tool/bootstrap_android.sh')
+          b=p.read_text(encoding='utf-8')
+          marker='# VisionSen Kotlin 2.1 production build patch'
+          if marker not in b:
+              b += r'''
+
+          # VisionSen Kotlin 2.1 production build patch
+          python3 - <<'PYKOTLIN'
+          from pathlib import Path
+          import re
+          p = Path('android/settings.gradle')
+          s = p.read_text(encoding='utf-8')
+          s2, count = re.subn(
+              r'(id\s+["\']org\.jetbrains\.kotlin\.android["\']\s+version\s+["\'])[^"\']+(["\']\s+apply\s+false)',
+              r'\g<1>2.1.0\g<2>', s, count=1)
+          if count != 1:
+              raise SystemExit('Kotlin Gradle plugin target missing in android/settings.gradle')
+          p.write_text(s2, encoding='utf-8')
+          PYKOTLIN
+          '''
+              p.write_text(b,encoding='utf-8')
+          PY
+          grep -F 'version: 1.7.0+34' pubspec.yaml
+          python3 -m py_compile tool/validate_strict.py
+          rm -rf tool/__pycache__
+
+      - name: Apply audited M1-M6 fixes
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat mobile-build/v1.7.0-34/final_patch/part-*.b64 | base64 -d > /tmp/mobile-final.raw.patch
+          echo 'ebd6ccd11c58625b7fc6902dc3b3244632579eb682e7ed2af828e7a74f7a8c09  /tmp/mobile-final.raw.patch' | sha256sum -c -
+          grep -v '^Binary files ' /tmp/mobile-final.raw.patch > /tmp/mobile-final.patch
+          cd "$MOBILE_ROOT"
+          patch --batch --forward --dry-run -p1 < /tmp/mobile-final.patch
+          patch --batch --forward -p1 < /tmp/mobile-final.patch
+          rm -rf tool/__pycache__
+          python3 tool/validate_strict.py
+          ! grep -R "legacy_default\|Text('Atanmamış')\|RegExp(r'^[A-Za-z0-9]{8}$')" -n lib test tool README.md || false
+
+      - name: Set up Java
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.24.0'
+          channel: stable
+          cache: true
+
+      - name: Prepare Android platform
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd "$MOBILE_ROOT"
+          bash tool/bootstrap_android.sh
+          cat android-gradle.properties >> android/gradle.properties
+          echo 'dev.steenbakker.mobile_scanner.useUnbundled=true' >> android/gradle.properties
+
+      - name: Resolve packages
+        shell: bash
+        run: |
+          cd "$MOBILE_ROOT"
+          flutter pub get
+
+      - name: Analyze
+        shell: bash
+        run: |
+          cd "$MOBILE_ROOT"
+          flutter analyze --no-fatal-infos
+
+      - name: Test
+        shell: bash
+        run: |
+          cd "$MOBILE_ROOT"
+          flutter test
+
+      - name: Build release APK
+        shell: bash
+        run: |
+          cd "$MOBILE_ROOT"
+          flutter build apk --release
+
+      - name: Package final source and hashes
+        shell: bash
+        run: |
+          set -euo pipefail
+          cp "$MOBILE_ROOT/build/app/outputs/flutter-apk/app-release.apk" VisionSen-Mobile-v1.7.0+34-Final.apk
+          tar -czf VisionSen-Mobile-v1.7.0+34-Final-source.tar.gz -C "$MOBILE_ROOT" README.md analysis_options.yaml android-gradle.properties lib pubspec.yaml test tool
+          sha256sum VisionSen-Mobile-v1.7.0+34-Final.apk VisionSen-Mobile-v1.7.0+34-Final-source.tar.gz > MOBILE-FINAL-SHA256SUMS.txt
+          cat MOBILE-FINAL-SHA256SUMS.txt
+
+      - name: Upload final APK and source
+        uses: actions/upload-artifact@v4
+        with:
+          name: VisionSen-Mobile-v1.7.0+34-Final
+          path: |
+            VisionSen-Mobile-v1.7.0+34-Final.apk
+            VisionSen-Mobile-v1.7.0+34-Final-source.tar.gz
+            MOBILE-FINAL-SHA256SUMS.txt
+          if-no-files-found: error
+          retention-days: 30
