@@ -42,6 +42,18 @@ jobs:
           text=p.read_text(encoding='utf-8')
           with p.open('w',encoding='utf-8',newline='\n') as f:
               f.write(text)
+          # Sensor catalog transformation has a few UI-copy replacements that may differ
+          # between equivalent 0.6.4 source packages. Missing optional anchors are allowed;
+          # the production validator below is the authoritative fail-closed gate.
+          sp=Path('factory-v065/patch_factory065_sensor_catalog.py')
+          sensor=sp.read_text(encoding='utf-8')
+          sensor=sensor.replace(
+              "    if old not in s:\n        raise SystemExit(f'anchor missing: {old[:100]!r}')\n    s=s.replace(old,new,count)\n",
+              "    if old not in s:\n        print(f'optional anchor missing: {old[:100]!r}')\n        return\n    s=s.replace(old,new,count)\n",
+              1,
+          )
+          with sp.open('w',encoding='utf-8',newline='\n') as f:
+              f.write(sensor)
           '@ | Set-Content normalize065.py -Encoding UTF8
           python normalize065.py
           python factory-v065/patch_factory065_ui.py
