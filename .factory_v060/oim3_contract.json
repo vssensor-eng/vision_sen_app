@@ -1,0 +1,14 @@
+{
+  "contract_version": 1,
+  "wire_protocol": "OIM3",
+  "wire_version": 3,
+  "channel_instance_min": 1,
+  "channel_instance_max": 99,
+  "channel_prefixes": [["VPPB","voc_ppb"],["PM25","pm2_5"],["PM10","pm10"],["VUG","voc_ug_m3"],["PM1","pm1_0"],["AS","air_speed"],["SM","smoke"],["BT","battery"],["SG","signal_strength"],["T","temperature"],["H","humidity"],["D","dew_point"],["C","co2"],["P","pressure"],["L","light"],["N","noise"],["A","aqi"],["F","fire"]],
+  "endpoint_canonicalization": {"scheme":"https","lowercase_host":true,"strip_default_https_port":true,"strip_trailing_slashes_except_root":true,"query_allowed":false,"fragment_allowed":false,"userinfo_allowed":false},
+  "company_key": {"min_bytes":32,"max_bytes":128,"charset":"A-Za-z0-9._:-"},
+  "send_interval_minutes": [1,5,15],
+  "default_ntp_servers": ["pool.ntp.org","time.cloudflare.com"],
+  "provision_secret": {"length":8,"alphabet":"ABCDEFGHJKLMNPQRSTUVWXYZ23456789"},
+  "max_channels_per_packet": 32
+}
