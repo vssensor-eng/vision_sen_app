@@ -96,7 +96,7 @@
      def select_firmware_file(self):
 --- a/tools/validate_production.py
 +++ b/tools/validate_production.py
-@@ -10,7 +10,7 @@
+@@ -12,7 +12,7 @@
  fw = json.loads((R / 'firmware/visionsen_firmware_manifest.json').read_text(encoding='utf-8'))
  
  checks = {
@@ -105,7 +105,7 @@
      'strict_contract': 'SYSTEM_CONTRACT = "VS-OIM3-STRICT-1"' in s,
      'fw_version': 'REQUIRED_FIRMWARE_VERSION = "2.2.0"' in s,
      'firmware_result_gate': 'if self.firmware != REQUIRED_FIRMWARE_VERSION:' in s,
-@@ -27,6 +27,11 @@
+@@ -31,6 +31,11 @@
      'secret_len': int(contract.get('provision_secret', {}).get('length') or 0) == 8,
      'fw_manifest_version': fw.get('firmware_version') == '2.2.0',
      'fw_manifest_contract': fw.get('system_contract') == 'VS-OIM3-STRICT-1',
@@ -117,21 +117,9 @@
  }
  
  for name, expected in (fw.get('sha256') or {}).items():
---- a/RELEASE_NOTES-v0.6.1.md
-+++ /dev/null
-@@ -1,9 +0,0 @@
--# VisionSen Factory PC Tool v0.6.1 – Production Final
--
--- Version bumped from 0.6.0 to 0.6.1.
--- Firmware workflow aligned to the final OIM3 v2.2.0 production build.
--- Embedded firmware now uses the CI-built final binary set and validated SHA-256 manifest.
--- COM reconnect logic retains the physical USB identity and follows COM-port re-enumeration after ESP32 reset.
--- The PC tool still protects `factory_data`, `nonce_state` and `storage/queue` during normal firmware flashing.
--- Factory Identity + Device Manifest readback validation remains mandatory.
--- The final Windows EXE is standalone and includes esptool/NVS tooling.
 --- /dev/null
 +++ b/RELEASE_NOTES-v0.6.2.md
-@@ -0,0 +1,9 @@
+@@ -0,0 +1,8 @@
 +# VisionSen Factory PC Tool v0.6.2 – Production Final
 +
 +- Production release guard strengthened.
