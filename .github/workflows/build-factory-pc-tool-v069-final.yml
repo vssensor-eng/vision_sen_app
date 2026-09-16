@@ -30,18 +30,53 @@ jobs:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           run-id: 35157794189
 
-      - name: Prepare Factory 0.6.9 source
+      - name: Prepare Factory 0.6.9 source fail-closed
         shell: pwsh
         run: |
           $ErrorActionPreference='Stop'
           New-Item -ItemType Directory -Force factory_pc_tool_v069 | Out-Null
           Expand-Archive factory068-artifact/VisionSen-Factory-PC-Tool-v0.6.8-Production-Final-source.zip -DestinationPath factory_pc_tool_v069 -Force
-          python factory-v069/apply_factory069_payload.py
+
+          @'
+          from pathlib import Path
+          import hashlib
+          p=Path('factory_pc_tool_v069/visionsen_factory_tool.py')
+          s=p.read_text(encoding='utf-8')
+          p.write_text(s,encoding='utf-8',newline='\n')
+          got=hashlib.sha256(p.read_bytes()).hexdigest()
+          expected='2f6d35020a2b5c0864c1f952dcdc9af8102bfb17a31c5748d14a27821f2b7b03'
+          assert got==expected,(got,expected)
+          print('Factory 0.6.8 normalized source SHA: PASS')
+          '@ | Set-Content verifybase.py -Encoding UTF8
+          python verifybase.py
+          if ($LASTEXITCODE -ne 0) { throw 'Factory 0.6.8 base source SHA verification failed' }
+
+          git apply --check --directory=factory_pc_tool_v069 factory-v069/factory069.patch
+          if ($LASTEXITCODE -ne 0) { throw 'Factory 0.6.9 patch preflight failed' }
+          git apply --directory=factory_pc_tool_v069 factory-v069/factory069.patch
+          if ($LASTEXITCODE -ne 0) { throw 'Factory 0.6.9 patch apply failed' }
+
+          @'
+          from pathlib import Path
+          import hashlib
+          p=Path('factory_pc_tool_v069/visionsen_factory_tool.py')
+          got=hashlib.sha256(p.read_bytes()).hexdigest()
+          expected='7298a5720a09d9d64514299f9c58141a62138c7b3c82955a7cfb15d6013bd88b'
+          assert got==expected,(got,expected)
+          print('Factory 0.6.9 patched source SHA: PASS')
+          '@ | Set-Content verifypatched.py -Encoding UTF8
+          python verifypatched.py
+          if ($LASTEXITCODE -ne 0) { throw 'Factory 0.6.9 patched source SHA verification failed' }
+
+          Copy-Item factory-v069/validate_production.py factory_pc_tool_v069/tools/validate_production.py -Force
+          Copy-Item factory-v069/RELEASE_NOTES-v0.6.9.md factory_pc_tool_v069/RELEASE_NOTES-v0.6.9.md -Force
           Get-ChildItem factory_pc_tool_v069 -Filter 'RELEASE_NOTES-v0.6.*.md' | Where-Object { $_.Name -ne 'RELEASE_NOTES-v0.6.9.md' } | Remove-Item -Force
           Remove-Item -Recurse -Force factory_pc_tool_v069/__pycache__,factory_pc_tool_v069/tools/__pycache__ -ErrorAction SilentlyContinue
           Get-ChildItem factory_pc_tool_v069 -Recurse -Filter *.pyc | Remove-Item -Force
+
           Push-Location factory_pc_tool_v069
           python tools/validate_production.py
+          if ($LASTEXITCODE -ne 0) { throw 'Factory 0.6.9 production validator failed' }
           Pop-Location
 
       - name: Cross-check embedded approved OIM3 2.2.1 firmware
@@ -66,13 +101,18 @@ jobs:
           print('Factory 0.6.9 embedded firmware exact SHA: PASS')
           '@ | Set-Content verifyfw.py -Encoding UTF8
           python verifyfw.py
+          if ($LASTEXITCODE -ne 0) { throw 'Embedded firmware verification failed' }
 
       - name: Install dependencies
         shell: pwsh
         run: |
+          $ErrorActionPreference='Stop'
           python -m pip install --upgrade pip
+          if ($LASTEXITCODE -ne 0) { throw 'pip upgrade failed' }
           python -m pip install -r factory_pc_tool_v069/requirements.txt
+          if ($LASTEXITCODE -ne 0) { throw 'requirements install failed' }
           python -m pip install pyinstaller
+          if ($LASTEXITCODE -ne 0) { throw 'PyInstaller install failed' }
 
       - name: Build standalone EXE
         shell: pwsh
@@ -97,9 +137,24 @@ jobs:
           Expand-Archive VisionSen-Factory-PC-Tool-v0.6.9-Production-Final-source.zip -DestinationPath source-check -Force
           if (Get-ChildItem source-check -Recurse -Directory -Filter __pycache__) { throw '__pycache__ found in source package' }
           if (Get-ChildItem source-check -Recurse -Filter *.pyc) { throw '*.pyc found in source package' }
+
           Push-Location source-check
           python tools/validate_production.py
+          if ($LASTEXITCODE -ne 0) { throw 'Packaged Factory 0.6.9 source validator failed' }
           Pop-Location
+
+          @'
+          from pathlib import Path
+          import hashlib
+          p=Path('source-check/visionsen_factory_tool.py')
+          got=hashlib.sha256(p.read_bytes()).hexdigest()
+          expected='7298a5720a09d9d64514299f9c58141a62138c7b3c82955a7cfb15d6013bd88b'
+          assert got==expected,(got,expected)
+          print('Packaged Factory 0.6.9 source SHA: PASS')
+          '@ | Set-Content verifypackage.py -Encoding UTF8
+          python verifypackage.py
+          if ($LASTEXITCODE -ne 0) { throw 'Packaged source SHA verification failed' }
+
           $exe='dist/VisionSen-Factory-PC-Tool-v0.6.9-Production-Final.exe'
           $src='VisionSen-Factory-PC-Tool-v0.6.9-Production-Final-source.zip'
           $eh=(Get-FileHash $exe -Algorithm SHA256).Hash.ToLower()
@@ -111,7 +166,7 @@ jobs:
       - name: Upload final Windows package
         uses: actions/upload-artifact@v4
         with:
-          name: VisionSen-Factory-PC-Tool-v0.6.9-Production-Final-Windows
+          name: VisionSen-Factory-PC-Tool-v0.6.9-Production-Final-Windows-R2
           path: |
             dist/VisionSen-Factory-PC-Tool-v0.6.9-Production-Final.exe
             VisionSen-Factory-PC-Tool-v0.6.9-Production-Final-source.zip
