@@ -1,0 +1,153 @@
+name: Build VisionSen Factory PC Tool v0.6.3 Production Final
+
+on:
+  push:
+    branches: [factory-pc-tool-v0.6.3]
+    paths:
+      - '.github/workflows/build-factory-pc-tool-v063-final.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.13'
+
+      - name: Download verified Factory 0.6.2 source
+        uses: actions/download-artifact@v4
+        with:
+          name: VisionSen-Factory-PC-Tool-v0.6.2-Production-Final-Windows
+          path: factory062-artifact
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          run-id: 35109121847
+
+      - name: Prepare Factory 0.6.3 source
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          New-Item -ItemType Directory -Force factory_pc_tool_v063 | Out-Null
+          Expand-Archive factory062-artifact/VisionSen-Factory-PC-Tool-v0.6.2-Production-Final-source.zip -DestinationPath factory_pc_tool_v063 -Force
+          @'
+          from pathlib import Path
+          root=Path('factory_pc_tool_v063')
+          p=root/'visionsen_factory_tool.py'
+          s=p.read_text(encoding='utf-8')
+          s=s.replace('APP_VERSION = "0.6.2"','APP_VERSION = "0.6.3"')
+          s=s.replace('REQUIRED_FIRMWARE_VERSION = "2.2.0"','REQUIRED_FIRMWARE_VERSION = "2.2.1"')
+          s=s.replace('VS-ESP-IDF-V2.2.0-OIM3-PRODUCTION-BASELINE','VS-ESP-IDF-V2.2.1-OIM3-PRODUCTION-BASELINE')
+          p.write_text(s,encoding='utf-8')
+          p=root/'tools/validate_production.py'
+          s=p.read_text(encoding='utf-8')
+          s=s.replace('APP_VERSION = "0.6.2"','APP_VERSION = "0.6.3"')
+          s=s.replace('REQUIRED_FIRMWARE_VERSION = "2.2.0"','REQUIRED_FIRMWARE_VERSION = "2.2.1"')
+          s=s.replace("fw.get('firmware_version') == '2.2.0'","fw.get('firmware_version') == '2.2.1'")
+          s=s.replace("firmware='2.2.0'","firmware='2.2.1'")
+          if "'source_clean':" not in s:
+              s=s.replace('checks = {', "checks = {\n    'source_clean': not any(R.rglob('__pycache__')) and not any(R.rglob('*.pyc')),")
+          p.write_text(s,encoding='utf-8')
+          for old in root.glob('RELEASE_NOTES-v0.6.*.md'): old.unlink()
+          (root/'RELEASE_NOTES-v0.6.3.md').write_text('''# VisionSen Factory PC Tool v0.6.3\n\n- Approved firmware raised to OIM3 2.2.1.\n- External ZIP/BIN must exactly match the embedded approved binary SHA-256 set.\n- Production source packages exclude __pycache__ and *.pyc.\n- System contract remains VS-OIM3-STRICT-1.\n''',encoding='utf-8')
+          '@ | Set-Content prepare063.py -Encoding UTF8
+          python prepare063.py
+          Remove-Item -Recurse -Force factory_pc_tool_v063/__pycache__,factory_pc_tool_v063/tools/__pycache__ -ErrorAction SilentlyContinue
+          Get-ChildItem factory_pc_tool_v063 -Recurse -Filter *.pyc | Remove-Item -Force
+
+      - name: Download approved OIM3 2.2.1 firmware
+        uses: actions/download-artifact@v4
+        with:
+          name: VisionSen-OIM3-v2.2.1-Production-Final
+          path: firmware221
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          run-id: 35118783205
+
+      - name: Embed and validate approved firmware
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          Remove-Item -Recurse -Force factory_pc_tool_v063/firmware -ErrorAction SilentlyContinue
+          New-Item -ItemType Directory -Force factory_pc_tool_v063/firmware | Out-Null
+          Copy-Item firmware221/full-flash/* factory_pc_tool_v063/firmware/
+          @'
+          import hashlib,json
+          from pathlib import Path
+          r=Path('factory_pc_tool_v063/firmware')
+          expected={
+            'bootloader.bin':'dccb8e97a7c10b29425e5322bbeb61871492f9736ba8c1e9a709d3ae974a4fd9',
+            'partition-table.bin':'4e4f13ef32d3f53b8c66d046047112160a8494205577d1622cabe70b7ce40519',
+            'ota_data_initial.bin':'7d2c7ac4888bfd75cd5f56e8d61f69595121183afc81556c876732fd3782c62f',
+            'visionsen_oim3.bin':'6e0fd387e0ef7d8542bf39c5af22c37bab882a4456c236dfe0d00ee3daec4b78'}
+          for n,w in expected.items():
+            g=hashlib.sha256((r/n).read_bytes()).hexdigest()
+            assert g==w,(n,g,w)
+          m=json.loads((r/'visionsen_firmware_manifest.json').read_text())
+          assert m['firmware_version']=='2.2.1'
+          assert m['sha256']==expected
+          app=(r/'visionsen_oim3.bin').read_bytes()
+          assert b'VS-ESP-IDF-V2.2.1-OIM3-PRODUCTION-BASELINE' in app
+          assert b'VS-MANIFEST-1' in app
+          print('Firmware 2.2.1 exact SHA cross-check: PASS')
+          '@ | Set-Content verifyfw.py -Encoding UTF8
+          python verifyfw.py
+          Push-Location factory_pc_tool_v063
+          python tools/validate_production.py
+          Pop-Location
+
+      - name: Install dependencies
+        shell: pwsh
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r factory_pc_tool_v063/requirements.txt
+          python -m pip install pyinstaller
+
+      - name: Build standalone EXE
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          python -m PyInstaller --noconfirm --clean --onefile --windowed `
+            --name VisionSen-Factory-PC-Tool-v0.6.3-Production-Final `
+            --add-data "factory_pc_tool_v063/firmware;firmware" `
+            --add-data "factory_pc_tool_v063/protocol;protocol" `
+            --collect-all esptool --collect-all esp_idf_nvs_partition_gen --collect-all esp_pylib --collect-all rich_click `
+            factory_pc_tool_v063/visionsen_factory_tool.py
+          if ($LASTEXITCODE -ne 0) { throw 'PyInstaller failed' }
+
+      - name: Package clean source and verify
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          Remove-Item -Recurse -Force factory_pc_tool_v063/__pycache__,factory_pc_tool_v063/tools/__pycache__ -ErrorAction SilentlyContinue
+          Get-ChildItem factory_pc_tool_v063 -Recurse -Filter *.pyc | Remove-Item -Force
+          Compress-Archive -Path factory_pc_tool_v063/* -DestinationPath VisionSen-Factory-PC-Tool-v0.6.3-Production-Final-source.zip -Force
+          New-Item -ItemType Directory -Force source-check | Out-Null
+          Expand-Archive VisionSen-Factory-PC-Tool-v0.6.3-Production-Final-source.zip -DestinationPath source-check -Force
+          if (Get-ChildItem source-check -Recurse -Directory -Filter __pycache__) { throw '__pycache__ found in source package' }
+          if (Get-ChildItem source-check -Recurse -Filter *.pyc) { throw '*.pyc found in source package' }
+          Push-Location source-check
+          python tools/validate_production.py
+          Pop-Location
+          $exe='dist/VisionSen-Factory-PC-Tool-v0.6.3-Production-Final.exe'
+          $src='VisionSen-Factory-PC-Tool-v0.6.3-Production-Final-source.zip'
+          $eh=(Get-FileHash $exe -Algorithm SHA256).Hash.ToLower()
+          $sh=(Get-FileHash $src -Algorithm SHA256).Hash.ToLower()
+          "$eh  VisionSen-Factory-PC-Tool-v0.6.3-Production-Final.exe" | Set-Content FACTORY-V063-SHA256SUMS.txt -Encoding ascii
+          "$sh  VisionSen-Factory-PC-Tool-v0.6.3-Production-Final-source.zip" | Add-Content FACTORY-V063-SHA256SUMS.txt -Encoding ascii
+          Get-Content FACTORY-V063-SHA256SUMS.txt
+
+      - name: Upload final Windows package
+        uses: actions/upload-artifact@v4
+        with:
+          name: VisionSen-Factory-PC-Tool-v0.6.3-Production-Final-Windows
+          path: |
+            dist/VisionSen-Factory-PC-Tool-v0.6.3-Production-Final.exe
+            VisionSen-Factory-PC-Tool-v0.6.3-Production-Final-source.zip
+            FACTORY-V063-SHA256SUMS.txt
+          if-no-files-found: error
+          retention-days: 30
