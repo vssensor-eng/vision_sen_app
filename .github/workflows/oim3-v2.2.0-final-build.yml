@@ -5,7 +5,7 @@ on:
     branches:
       - oim3-build-v2.2.0-final
     paths:
-      - 'oim3-build/v2.2.0/final_patch/**'
+      - 'oim3-build/v2.2.0/final_patch/final.patch.gz.b64'
       - '.github/workflows/oim3-v2.2.0-final-build.yml'
   workflow_dispatch:
 
@@ -52,7 +52,7 @@ jobs:
           PY
           (cd oim3-build/v2.2.0/project && patch --batch --forward -p1 < /tmp/v220-code.patch)
 
-      - name: Normalize baseline source
+      - name: Normalize current production source
         shell: bash
         run: |
           set -euo pipefail
@@ -65,12 +65,6 @@ jobs:
           s=s.replace('// Optional server-desired configuration is independently signed so the\n    // legacy receipt_signature remains byte-for-byte compatible with V2.1.9.','// Optional server-desired configuration is independently signed.\n    // Receipt signature uses the current OIM3 wire format.')
           s=s.replace('// These are transient request-state races/replays. send() creates a new\n            // nonce/envelope on the next attempt, preserving the V2.1.9 short-backoff\n            // behavior and compatibility with older servers.','// These are transient request-state races/replays. send() creates a new\n            // nonce/envelope on the next bounded retry.')
           s=s.replace('// Unknown 409 most likely means an older/newer compatible server. Do\n            // not turn an unrecognized conflict into a one-hour configuration stall.\n            return SendResult::RetryableFailure;','// Unknown conflict means the current web/device contract is inconsistent.\n            // Preserve queued telemetry and require explicit repair.\n            return SendResult::ConfigurationFailure;')
-          p.write_text(s,encoding='utf-8')
-          p=Path('sdkconfig.defaults')
-          s=p.read_text(encoding='utf-8')
-          s=s.replace('VisionSen OIM3 native ESP-IDF V2.1.12 PRODUCTION HARDENING','VisionSen OIM3 native ESP-IDF 2.2.0 PRODUCTION BASELINE')
-          s=s.replace('# 4 MB reserved dual-slot layout inherited from fix12. OTA runtime work is\n# currently suspended, but keeping this table avoids another storage migration\n# later. V2.1.12 still uses a fixed 64-slot queue (~104 KB).','# 4 MB dual-slot OTA layout is the current production layout.\n# The offline queue uses a fixed 64-slot file (~104 KB).')
-          s=s.replace('# V2.1.12 offline ring queue lives in the existing "storage" SPIFFS partition.','# Offline ring queue lives in the dedicated "storage" SPIFFS partition.')
           p.write_text(s,encoding='utf-8')
           PY
           rm -f FACTORY_SERIAL_WINDOWS.txt FINAL_RELEASE_CHECKLIST.md V2.*_SUMMARY.md docs/PRODUCTION_HARDENING.md tools/validate_final.py
@@ -97,10 +91,25 @@ jobs:
           import sys
           R=Path(__file__).resolve().parents[1]
           def t(p): return (R/p).read_text(encoding='utf-8')
-          board=t('components/oim_board/include/oim_board.hpp'); factory=t('components/oim_factory/oim_factory.cpp'); prov=t('components/oim_provision/oim_provision.cpp'); cfg=t('components/oim_config/oim_config.cpp'); queue=t('components/oim_queue/oim_queue.cpp'); nonce=t('components/oim_nonce/oim_nonce.cpp')
-          checks={'version':'FIRMWARE_VERSION = "2.2.0"' in board,'contract':'SYSTEM_CONTRACT = "VS-OIM3-STRICT-1"' in board,'protocol4':'PROVISION_PROTOCOL_VERSION = 4' in board,'manifest_required':'Factory manifest missing; strict customer operation blocked' in factory,'config_current':'send_interval_err != ESP_OK' in cfg,'queue4':'QUEUE_VERSION = 4' in queue,'nonce_counter':'PARTITION = "nonce_state"' in nonce and 'NAMESPACE = "oimnonce"' in nonce,'info_contract':'system_contract' in prov}
+          board=t('components/oim_board/include/oim_board.hpp')
+          factory=t('components/oim_factory/oim_factory.cpp')
+          prov=t('components/oim_provision/oim_provision.cpp')
+          cfg=t('components/oim_config/oim_config.cpp')
+          queue=t('components/oim_queue/oim_queue.cpp')
+          nonce=t('components/oim_nonce/oim_nonce.cpp')
+          checks={
+            'version':'FIRMWARE_VERSION = "2.2.0"' in board,
+            'contract':'SYSTEM_CONTRACT = "VS-OIM3-STRICT-1"' in board,
+            'protocol4':'PROVISION_PROTOCOL_VERSION = 4' in board,
+            'manifest_required':'Factory manifest missing; strict customer operation blocked' in factory,
+            'config_current':'send_interval_err != ESP_OK' in cfg,
+            'queue4':'QUEUE_VERSION = 4' in queue,
+            'nonce_counter':'PARTITION = "nonce_state"' in nonce and 'NAMESPACE = "oimnonce"' in nonce,
+            'info_contract':'system_contract' in prov,
+          }
           bad=[k for k,v in checks.items() if not v]
-          if bad: print('FIRMWARE PRODUCTION BASELINE GATE FAIL:', ', '.join(bad)); sys.exit(1)
+          if bad:
+              print('FIRMWARE PRODUCTION BASELINE GATE FAIL:', ', '.join(bad)); sys.exit(1)
           print('FIRMWARE PRODUCTION BASELINE GATE PASS')
           PY
 
@@ -108,7 +117,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          cat oim3-build/v2.2.0/final_patch/part-*.b64 | base64 -d > /tmp/final-v220.patch
+          base64 -d oim3-build/v2.2.0/final_patch/final.patch.gz.b64 | gzip -d > /tmp/final-v220.patch
           echo 'fcd8f019f84a8e9a6a031daed4ee93a73314a717c11965c04db2b3caf37eeefd  /tmp/final-v220.patch' | sha256sum -c -
           cd oim3-build/v2.2.0/project
           patch --batch --forward --dry-run -p1 < /tmp/final-v220.patch
