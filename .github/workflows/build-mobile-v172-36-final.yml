@@ -2,8 +2,7 @@ name: Build VisionSen Mobile v1.7.2+36 Final
 
 on:
   push:
-    branches:
-      - mobile-v1.7.2-36-final
+    branches: [mobile-v1.7.2-36-final]
     paths:
       - 'mobile-build/v1.7.2-36/**'
       - '.github/workflows/build-mobile-v172-36-final.yml'
@@ -18,17 +17,14 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
+      - uses: actions/checkout@v4
       - name: Download verified 1.7.1+35 source artifact
         env:
           GH_TOKEN: ${{ github.token }}
         shell: bash
         run: |
           set -euo pipefail
-          rm -rf /tmp/mobile171 mobile172
-          mkdir -p /tmp/mobile171 mobile172
+          rm -rf /tmp/mobile171 mobile172; mkdir -p /tmp/mobile171 mobile172
           gh run download 35114579272 --repo "$GITHUB_REPOSITORY" -n 'VisionSen-Mobile-v1.7.1+35-WiFi-Fix' -D /tmp/mobile171
           tar -xzf '/tmp/mobile171/VisionSen-Mobile-v1.7.1+35-WiFi-Fix-source.tar.gz' -C mobile172
           echo "MOBILE_ROOT=$PWD/mobile172" >> "$GITHUB_ENV"
@@ -40,23 +36,27 @@ jobs:
           set -euo pipefail
           cat mobile-build/v1.7.2-36/patch/part-*.b64 | base64 -d | gzip -d > /tmp/mobile-v171-to-v172.patch
           echo '45f424466d2d76579b352df40713332c12b33bbcdb2be33895b3f6f769a949ee  /tmp/mobile-v171-to-v172.patch' | sha256sum -c -
-          base64 -d mobile-build/v1.7.2-36/progress-hotfix.patch.gz.b64 | gzip -d > /tmp/progress-hotfix.patch
-          echo '063dd35f086bfe504527f58aa69af1b4c0ec5e132bf9a7e64a824ebf151ce81e  /tmp/progress-hotfix.patch' | sha256sum -c -
           cd "$MOBILE_ROOT"
           patch --batch --forward -p1 < /tmp/mobile-v171-to-v172.patch
-          patch --batch --forward -p1 < /tmp/progress-hotfix.patch
+          python3 - <<'PY'
+          from pathlib import Path
+          p=Path('lib/screens/wifi_provision_screen.dart')
+          s=p.read_text(encoding='utf-8')
+          if 'Widget _progressCard()' not in s:
+              needle='  InputDecoration _decoration(String label, IconData icon, {Widget? suffix, String? hint}) {'
+              method="""  Widget _progressCard() {\n    final pct = _progress.round();\n    return Panel(\n      child: Column(\n        crossAxisAlignment: CrossAxisAlignment.start,\n        children: [\n          Row(\n            children: [\n              Expanded(child: Text(_progressLabel, style: const TextStyle(fontWeight: FontWeight.w800))),\n              Text('$pct%', style: const TextStyle(color: AppTheme.cyan, fontWeight: FontWeight.w900)),\n            ],\n          ),\n          const SizedBox(height: 10),\n          LinearProgressIndicator(\n            value: _progress / 100, minHeight: 8, borderRadius: BorderRadius.circular(99),\n            backgroundColor: AppTheme.panel2, color: _progress >= 100 ? AppTheme.green : AppTheme.cyan,\n          ),\n        ],\n      ),\n    );\n  }\n\n"""
+              if needle not in s: raise SystemExit('progress insertion point missing')
+              p.write_text(s.replace(needle,method+needle,1),encoding='utf-8')
+          PY
           rm -rf tool/__pycache__
           python3 tool/validate_strict.py
           grep -F 'version: 1.7.2+36' pubspec.yaml
 
-      - name: Set up Java
-        uses: actions/setup-java@v5
+      - uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: '17'
-
-      - name: Set up Flutter
-        uses: subosito/flutter-action@v2
+      - uses: subosito/flutter-action@v2
         with:
           flutter-version: '3.24.0'
           channel: stable
@@ -82,15 +82,12 @@ jobs:
       - name: Resolve packages
         shell: bash
         run: cd "$MOBILE_ROOT" && flutter pub get
-
       - name: Analyze
         shell: bash
         run: cd "$MOBILE_ROOT" && flutter analyze --no-fatal-infos
-
       - name: Test
         shell: bash
         run: cd "$MOBILE_ROOT" && flutter test
-
       - name: Build release APK
         shell: bash
         run: cd "$MOBILE_ROOT" && flutter build apk --release
@@ -112,17 +109,15 @@ jobs:
         run: |
           set -euo pipefail
           cp "$MOBILE_ROOT/build/app/outputs/flutter-apk/app-release.apk" VisionSen-Mobile-v1.7.2+36-Final.apk
-          rm -rf "$MOBILE_ROOT/tool/__pycache__"
-          find "$MOBILE_ROOT" -name '*.pyc' -delete
+          rm -rf "$MOBILE_ROOT/tool/__pycache__"; find "$MOBILE_ROOT" -name '*.pyc' -delete
           tar -czf VisionSen-Mobile-v1.7.2+36-Final-source.tar.gz -C "$MOBILE_ROOT" README.md analysis_options.yaml android-gradle.properties lib pubspec.yaml test tool
-          rm -rf /tmp/mobile172-check && mkdir /tmp/mobile172-check
+          rm -rf /tmp/mobile172-check; mkdir /tmp/mobile172-check
           tar -xzf VisionSen-Mobile-v1.7.2+36-Final-source.tar.gz -C /tmp/mobile172-check
           python3 /tmp/mobile172-check/tool/validate_strict.py
           sha256sum VisionSen-Mobile-v1.7.2+36-Final.apk VisionSen-Mobile-v1.7.2+36-Final-source.tar.gz > MOBILE-V172-SHA256SUMS.txt
           cat MOBILE-V172-SHA256SUMS.txt
 
-      - name: Upload APK and source
-        uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v4
         with:
           name: VisionSen-Mobile-v1.7.2+36-Final
           path: |
