@@ -1,0 +1,164 @@
+name: OIM3 v2.2.0 Production Final Build
+
+on:
+  push:
+    branches:
+      - oim3-build-v2.2.0-final
+    paths:
+      - 'oim3-build/v2.2.0/final_patch/**'
+      - '.github/workflows/oim3-v2.2.0-final-build.yml'
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout final branch
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Reconstruct verified v2.2.0 baseline
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch origin oim3-build-v2.1.10:refs/remotes/origin/oim3-build-v2.1.10
+          git checkout origin/oim3-build-v2.1.10 -- oim3-build/v2.1.10/source3
+          rm -rf oim3-build/v2.2.0/project
+          mkdir -p /tmp/oim3-src oim3-build/v2.2.0/project
+          cat oim3-build/v2.1.10/source3/part-*.b64 | base64 -d > /tmp/oim3-src/source.tar.xz
+          echo '402a28487cc01cc6e31f0e5eb9b8b1d02b8bc416c8e2e149692869edd0f2b88d  /tmp/oim3-src/source.tar.xz' | sha256sum -c -
+          tar -xJf /tmp/oim3-src/source.tar.xz -C oim3-build/v2.2.0/project
+          cat oim3-build/v2.1.11/script/part-*.b64 | base64 -d > /tmp/apply_v211.py
+          python3 -m py_compile /tmp/apply_v211.py
+          (cd oim3-build/v2.2.0/project && python3 /tmp/apply_v211.py)
+          (cd oim3-build/v2.2.0/project && python3 ../../v2.1.11/postfix.py)
+          (cd oim3-build/v2.2.0/project && patch -p1 < ../../v2.1.12/v211-to-v212.patch)
+          cat oim3-build/v2.2.0/patch/part-*.b64 | base64 -d | gzip -d > /tmp/v212-to-v220.patch
+          echo '5cf66716356378f64435b11d38769d7c563f7d8a0586486a96b2d111f7800234  /tmp/v212-to-v220.patch' | sha256sum -c -
+          python3 - <<'PY'
+          from pathlib import Path
+          src=Path('/tmp/v212-to-v220.patch').read_text(encoding='utf-8')
+          keep={'CMakeLists.txt','components/oim_board/include/oim_board.hpp','components/oim_config/oim_config.cpp','components/oim_factory/include/oim_factory.hpp','components/oim_factory/oim_factory.cpp','components/oim_nonce/include/oim_nonce.hpp','components/oim_nonce/oim_nonce.cpp','components/oim_provision/oim_provision.cpp','components/oim_queue/oim_queue.cpp','components/oim_sensors/oim_sensors.cpp','components/oim_wifi/oim_wifi.cpp','main/app_main.cpp'}
+          out=[]
+          for b in src.split('diff --git ')[1:]:
+              a=b.splitlines()[0].split()[0]
+              if a.startswith('a/'): a=a[2:]
+              if a in keep: out.append('diff --git '+b)
+          if not out: raise SystemExit('filtered v2.2.0 patch is empty')
+          Path('/tmp/v220-code.patch').write_text(''.join(out),encoding='utf-8')
+          PY
+          (cd oim3-build/v2.2.0/project && patch --batch --forward -p1 < /tmp/v220-code.patch)
+
+      - name: Normalize baseline source
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd oim3-build/v2.2.0/project
+          python3 - <<'PY'
+          from pathlib import Path
+          p=Path('components/oim_oim3/oim_oim3.cpp')
+          s=p.read_text(encoding='utf-8')
+          s=s.replace('// Arduino V1.3.8 compatibility is intentional here. ESP.getEfuseMac()\n    // writes the 6-byte factory MAC directly into a uint64_t on little-endian ESP32,\n    // then the legacy OIM3 code uses: prefix = (uint32_t)(mac ^ (mac >> 32)).\n    // Reconstruct that exact numeric value instead of interpreting MAC bytes as\n    // a conventional big-endian 48-bit integer. The server remembers this prefix.','// Stable 32-bit device nonce prefix derived from all six eFuse MAC bytes.\n    // The server learns this prefix from the first authenticated counter-v1 packet\n    // and rejects prefix changes for the assigned device.')
+          s=s.replace('// Optional server-desired configuration is independently signed so the\n    // legacy receipt_signature remains byte-for-byte compatible with V2.1.9.','// Optional server-desired configuration is independently signed.\n    // Receipt signature uses the current OIM3 wire format.')
+          s=s.replace('// These are transient request-state races/replays. send() creates a new\n            // nonce/envelope on the next attempt, preserving the V2.1.9 short-backoff\n            // behavior and compatibility with older servers.','// These are transient request-state races/replays. send() creates a new\n            // nonce/envelope on the next bounded retry.')
+          s=s.replace('// Unknown 409 most likely means an older/newer compatible server. Do\n            // not turn an unrecognized conflict into a one-hour configuration stall.\n            return SendResult::RetryableFailure;','// Unknown conflict means the current web/device contract is inconsistent.\n            // Preserve queued telemetry and require explicit repair.\n            return SendResult::ConfigurationFailure;')
+          p.write_text(s,encoding='utf-8')
+          p=Path('sdkconfig.defaults')
+          s=p.read_text(encoding='utf-8')
+          s=s.replace('VisionSen OIM3 native ESP-IDF V2.1.12 PRODUCTION HARDENING','VisionSen OIM3 native ESP-IDF 2.2.0 PRODUCTION BASELINE')
+          s=s.replace('# 4 MB reserved dual-slot layout inherited from fix12. OTA runtime work is\n# currently suspended, but keeping this table avoids another storage migration\n# later. V2.1.12 still uses a fixed 64-slot queue (~104 KB).','# 4 MB dual-slot OTA layout is the current production layout.\n# The offline queue uses a fixed 64-slot file (~104 KB).')
+          s=s.replace('# V2.1.12 offline ring queue lives in the existing "storage" SPIFFS partition.','# Offline ring queue lives in the dedicated "storage" SPIFFS partition.')
+          p.write_text(s,encoding='utf-8')
+          PY
+          rm -f FACTORY_SERIAL_WINDOWS.txt FINAL_RELEASE_CHECKLIST.md V2.*_SUMMARY.md docs/PRODUCTION_HARDENING.md tools/validate_final.py
+          mkdir -p docs tools
+          cat > README.md <<'EOF'
+          # VisionSen OIM3 Firmware 2.2.0
+
+          Production baseline for the first field deployment.
+
+          Current contract only:
+          - system contract: `VS-OIM3-STRICT-1`
+          - provisioning: `VS2`, protocol `4`
+          - Factory Identity schema: `2`
+          - Device Manifest schema: `1` and mandatory
+          - telemetry endpoint: HTTPS only
+          - offline queue format: `4`
+          - nonce persistence: dedicated `nonce_state`, `counter-v1`
+          - supported physical drivers in this release: `SHT45:1`, `BATTERY:1`
+
+          A device without a valid Factory Identity and Device Manifest does not enter customer operation.
+          EOF
+          cat > tools/validate_strict.py <<'PY'
+          from pathlib import Path
+          import sys
+          R=Path(__file__).resolve().parents[1]
+          def t(p): return (R/p).read_text(encoding='utf-8')
+          board=t('components/oim_board/include/oim_board.hpp'); factory=t('components/oim_factory/oim_factory.cpp'); prov=t('components/oim_provision/oim_provision.cpp'); cfg=t('components/oim_config/oim_config.cpp'); queue=t('components/oim_queue/oim_queue.cpp'); nonce=t('components/oim_nonce/oim_nonce.cpp')
+          checks={'version':'FIRMWARE_VERSION = "2.2.0"' in board,'contract':'SYSTEM_CONTRACT = "VS-OIM3-STRICT-1"' in board,'protocol4':'PROVISION_PROTOCOL_VERSION = 4' in board,'manifest_required':'Factory manifest missing; strict customer operation blocked' in factory,'config_current':'send_interval_err != ESP_OK' in cfg,'queue4':'QUEUE_VERSION = 4' in queue,'nonce_counter':'PARTITION = "nonce_state"' in nonce and 'NAMESPACE = "oimnonce"' in nonce,'info_contract':'system_contract' in prov}
+          bad=[k for k,v in checks.items() if not v]
+          if bad: print('FIRMWARE PRODUCTION BASELINE GATE FAIL:', ', '.join(bad)); sys.exit(1)
+          print('FIRMWARE PRODUCTION BASELINE GATE PASS')
+          PY
+
+      - name: Apply audited final fixes and validate
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat oim3-build/v2.2.0/final_patch/part-*.b64 | base64 -d > /tmp/final-v220.patch
+          echo 'fcd8f019f84a8e9a6a031daed4ee93a73314a717c11965c04db2b3caf37eeefd  /tmp/final-v220.patch' | sha256sum -c -
+          cd oim3-build/v2.2.0/project
+          patch --batch --forward --dry-run -p1 < /tmp/final-v220.patch
+          patch --batch --forward -p1 < /tmp/final-v220.patch
+          find . -name '*.orig' -delete
+          rm -rf managed_components/espressif__cjson/cJSON/.git
+          python3 tools/validate_strict.py
+          ! grep -R -n --exclude-dir=build --exclude-dir=managed_components --exclude=sdkconfig --exclude='*.md' 'legacy_default\|use_legacy_default_manifest\|PROVISION_PROTOCOL_VERSION = 3' components main tools
+
+      - name: Build ESP32 firmware with ESP-IDF v6.1
+        uses: espressif/esp-idf-ci-action@v1
+        with:
+          esp_idf_version: v6.1
+          target: esp32
+          path: oim3-build/v2.2.0/project
+          command: idf.py build
+
+      - name: Collect final artifacts
+        shell: bash
+        run: |
+          set -euo pipefail
+          P='oim3-build/v2.2.0/project/build'
+          A='oim3-build/v2.2.0/final-artifact'
+          mkdir -p "$A/full-flash"
+          cp "$P/bootloader/bootloader.bin" "$A/full-flash/bootloader.bin"
+          cp "$P/partition_table/partition-table.bin" "$A/full-flash/partition-table.bin"
+          cp "$P/ota_data_initial.bin" "$A/full-flash/ota_data_initial.bin"
+          cp "$P/visionsen_oim3.bin" "$A/full-flash/visionsen_oim3.bin"
+          strings "$A/full-flash/visionsen_oim3.bin" | grep -F 'VS-ESP-IDF-V2.2.0-OIM3-PRODUCTION-BASELINE'
+          strings "$A/full-flash/visionsen_oim3.bin" | grep -F 'VS-OIM3-STRICT-1'
+          python3 - <<'PY'
+          from pathlib import Path
+          import hashlib,json
+          a=Path('oim3-build/v2.2.0/final-artifact/full-flash')
+          files=['bootloader.bin','partition-table.bin','ota_data_initial.bin','visionsen_oim3.bin']
+          hashes={n:hashlib.sha256((a/n).read_bytes()).hexdigest() for n in files}
+          manifest={'firmware_version':'2.2.0','firmware_name':'VS-ESP-IDF-V2.2.0-OIM3-PRODUCTION-BASELINE','system_contract':'VS-OIM3-STRICT-1','provision_protocol':4,'manifest_schema':1,'nonce_mode':'counter-v1','max_channels_per_packet':32,'protected_regions':[{'name':'factory_data','start':'0x12000','end':'0x18000'},{'name':'nonce_state','start':'0x18000','end':'0x20000'},{'name':'storage','start':'0x320000','end':'0x400000'}],'flash_files':{'0x1000':'bootloader.bin','0x8000':'partition-table.bin','0x10000':'ota_data_initial.bin','0x20000':'visionsen_oim3.bin'},'sha256':hashes}
+          (a/'visionsen_firmware_manifest.json').write_text(json.dumps(manifest,indent=2)+'\n')
+          (a/'flasher_args.json').write_text(json.dumps({'flash_files':manifest['flash_files']},indent=2)+'\n')
+          (a/'README.txt').write_text('VisionSen OIM3 2.2.0 Production Final\nNormal flash MUST NOT erase/write factory_data, nonce_state or storage.\nOffsets: 0x1000 bootloader, 0x8000 partition table, 0x10000 OTA data, 0x20000 application.\n')
+          (a/'SHA256SUMS.txt').write_text(''.join(f"{hashes[n]}  {n}\n" for n in files))
+          PY
+          tar --exclude='./build' --exclude='./artifact' --exclude='./final-artifact' -czf "$A/VisionSen-OIM3-v2.2.0-Production-Final-source.tar.gz" -C oim3-build/v2.2.0/project .
+          (cd "$A/full-flash" && zip -q ../VisionSen-OIM3-v2.2.0-Production-Full-Flash-Final.zip *)
+          sha256sum "$A"/*.gz "$A"/*.zip > "$A/RELEASE_SHA256SUMS.txt"
+
+      - name: Upload production final artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: VisionSen-OIM3-v2.2.0-Production-Final
+          path: oim3-build/v2.2.0/final-artifact/
+          if-no-files-found: error
+          retention-days: 30
