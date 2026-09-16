@@ -1,0 +1,252 @@
+--- a/visionsen_factory_tool.py
++++ b/visionsen_factory_tool.py
+@@ -54,7 +54,7 @@
+     nvsgen = None
+ 
+ APP_NAME = "VisionSen Factory Tool"
+-APP_VERSION = "0.6.3"
++APP_VERSION = "0.6.4"
+ BUILD_MARKER = "production-baseline-strict"
+ CONFIG_FILE = Path.home() / ".visionsen_factory_tool.json"
+ DEFAULT_REPORT = Path.home() / "VisionSenFactory" / "production_records.csv"
+@@ -228,6 +228,19 @@
+     draw.text((x, 302), payload[:42] + "…", fill="black", font=small_font)
+     draw.rectangle((12, 12, 828, 378), outline="black", width=2)
+     return canvas, payload
++
++
++def next_manifest_version_for_sensor_change(current_version: int, baseline_version: int, baseline_sensor_keys, selected_sensor_keys) -> int:
++    """Return a monotonic manifest version for a physical sensor-set change."""
++    current = max(1, int(current_version))
++    baseline = max(0, int(baseline_version))
++    if baseline < 1:
++        return current
++    before = normalize_manifest_sensor_keys(baseline_sensor_keys)
++    after = normalize_manifest_sensor_keys(selected_sensor_keys)
++    if before != after and current <= baseline:
++        return baseline + 1
++    return current
+ 
+ 
+ @dataclass
+@@ -413,6 +426,12 @@
+         self.selected_firmware_kind = "embedded"
+         self.selected_firmware_meta: dict[str, object] = self._embedded_firmware_meta()
+         self.last_written: dict[str, object] = {}
++        self._loaded_identity_serial = ""
++        self._loaded_identity_hwrev = ""
++        self._loaded_manifest_version = 0
++        self._loaded_manifest_hash = ""
++        self._loaded_manifest_sensors: tuple[str, ...] = ()
++        self._manifest_ui_syncing = False
+         self._build_ui()
+         self.refresh_ports()
+         self.protocol("WM_DELETE_WINDOW", self._on_close)
+@@ -612,13 +631,16 @@
+         self.manifest_version_entry = self._register_identity_input(tk.Entry(
+             manifest, textvariable=self.manifest_version_var, width=8, bg=ENTRY_BG, fg="#000000", relief="sunken", bd=1, state="disabled"))
+         self.manifest_version_entry.grid(row=0, column=4, sticky="w", padx=4, pady=3)
++        self.manifest_bump_button = self._register_device_widget(btn(
++            manifest, "Sürüm +1", self.bump_manifest_version, width=9, state="disabled"))
++        self.manifest_bump_button.grid(row=0, column=5, sticky="w", padx=4, pady=3)
+         self.manifest_hash_var = tk.StringVar(value="Seri no + sensör seçimi ile hesaplanacak")
+         tk.Label(manifest, textvariable=self.manifest_hash_var, bg=PANEL, fg=MUTED,
+                  font=("Consolas", 8), anchor="w").grid(row=1, column=0, columnspan=8, sticky="ew", padx=2, pady=(5, 1))
+         self.manifest_status_var = tk.StringVar(value="Manifest seri numarasına bağlıdır; sensör seçimini değiştirdiğinizde hash değişir.")
+         tk.Label(manifest, textvariable=self.manifest_status_var, bg=PANEL, fg=MUTED,
+                  font=("Segoe UI", 9, "bold"), anchor="w").grid(row=2, column=0, columnspan=8, sticky="ew", padx=2, pady=(3, 0))
+-        self.manifest_help_var = tk.StringVar(value="1) Fiziksel sensörleri seç  2) İlk üretimde v1; sensör değişiminde sürümü artır  3) Seçili Sensörleri Cihaza Yaz")
++        self.manifest_help_var = tk.StringVar(value="1) Fiziksel sensörleri seç  2) Sensör seti değişirse sürüm otomatik +1  3) Servis güncellemesinde storage/queue korunur")
+         tk.Label(manifest, textvariable=self.manifest_help_var, bg=PANEL, fg=BLUE,
+                  font=("Segoe UI", 8, "bold"), anchor="w").grid(row=3, column=0, columnspan=6, sticky="ew", padx=2, pady=(7, 2))
+         self.write_manifest_button = self._register_device_widget(btn(
+@@ -827,6 +849,9 @@
+     def _apply_auto_identity(self, result) -> None:
+         r = result if isinstance(result, TestResult) else TestResult()
+         if r.identity_ok:
++            self._manifest_ui_syncing = True
++            self._loaded_identity_serial = (r.serial or "").strip().upper()
++            self._loaded_identity_hwrev = (r.hw_rev or "").strip()
+             self.serial_var.set(r.serial or "")
+             self.hwrev_var.set(r.hw_rev or "OIM3-R1")
+             self.prod_var.set(r.production_date or date.today().isoformat())
+@@ -841,19 +866,34 @@
+                 f"Serial: {r.serial or '—'}   HW-ID: {r.hw_id or '—'}   Schema: {r.factory_schema or '—'}   HW-Rev: {r.hw_rev or '—'}   Tarih: {r.production_date or '—'}"
+             )
+             if r.manifest_ok:
++                self._loaded_manifest_version = int(r.manifest_version)
++                self._loaded_manifest_hash = (r.manifest_hash or "").strip().lower()
++                self._loaded_manifest_sensors = normalize_manifest_sensor_keys(r.manifest_sensors)
+                 self.manifest_version_var.set(str(r.manifest_version))
+                 self.manifest_sht45_var.set("SHT45:1" in r.manifest_sensors)
+                 self.manifest_battery_var.set("BATTERY:1" in r.manifest_sensors)
+                 self.manifest_status_var.set(f"Cihaz manifesti okundu • v{r.manifest_version} • {','.join(r.manifest_sensors)}")
++                self.clear_storage_var.set(False)
+             else:
++                self._loaded_manifest_version = 0
++                self._loaded_manifest_hash = ""
++                self._loaded_manifest_sensors = ()
+                 self.manifest_version_var.set("1")
+                 self.manifest_sht45_var.set(True)
+                 self.manifest_battery_var.set(True)
+                 self.manifest_status_var.set("Factory Device Manifest yok/geçersiz • cihaz üretime alınamaz; manifest yazılmalı.")
++                self.clear_storage_var.set(True)
++            self._manifest_ui_syncing = False
+             self._refresh_manifest_preview()
+             self._set_operation_status("identity", f"✓ Mevcut Factory Identity otomatik okundu{secret_note}.", "success")
+             self._set_global_status("Cihaz bağlı • Factory Identity okundu", "success")
+         else:
++            self._manifest_ui_syncing = True
++            self._loaded_identity_serial = ""
++            self._loaded_identity_hwrev = ""
++            self._loaded_manifest_version = 0
++            self._loaded_manifest_hash = ""
++            self._loaded_manifest_sensors = ()
+             self.serial_var.set("")
+             self.hwrev_var.set("OIM3-R1")
+             self.prod_var.set(date.today().isoformat())
+@@ -862,6 +902,8 @@
+             self.manifest_sht45_var.set(True)
+             self.manifest_battery_var.set(True)
+             self.manifest_status_var.set("Yeni cihaz • SHT45 + BATTERY varsayılan seçildi; üretim kartına göre değiştirin.")
++            self.clear_storage_var.set(True)
++            self._manifest_ui_syncing = False
+             self._refresh_manifest_preview()
+             self.identity_view.set("Yeni cihaz • Factory Identity bulunamadı")
+             self._set_operation_status("identity", "Yeni cihaz • Factory Identity bulunamadı. Yeni kimlik hazırlanabilir.", "info")
+@@ -1646,11 +1688,41 @@
+         if not hasattr(self, "manifest_hash_var"):
+             return
+         try:
+-            digest = self._current_manifest_hash()
+-            sensors = ",".join(self._selected_manifest_sensor_keys())
++            selected = self._selected_manifest_sensor_keys()
++            current = self._manifest_version()
++            same_identity = (
++                bool(self._loaded_identity_serial)
++                and self.serial_var.get().strip().upper() == self._loaded_identity_serial
++            )
++            if same_identity and not self._manifest_ui_syncing:
++                adjusted = next_manifest_version_for_sensor_change(
++                    current, self._loaded_manifest_version, self._loaded_manifest_sensors, selected
++                )
++                if adjusted != current:
++                    self._manifest_ui_syncing = True
++                    try:
++                        self.manifest_version_var.set(str(adjusted))
++                    finally:
++                        self._manifest_ui_syncing = False
++                    current = adjusted
++                    self.manifest_status_var.set(
++                        f"Sensör seti değişti • Device Manifest otomatik v{adjusted} yapıldı • storage/queue korunacak."
++                    )
++            digest = manifest_hash(self.serial_var.get().strip().upper(), current, selected)
++            sensors = ",".join(selected)
+             self.manifest_hash_var.set(f"Hash: {digest}   •   sensors={sensors}")
+         except Exception as exc:
+             self.manifest_hash_var.set(f"Manifest bekliyor: {exc}")
++
++    def bump_manifest_version(self):
++        try:
++            self.require_connected()
++            version = self._manifest_version() + 1
++        except Exception as exc:
++            messagebox.showerror(APP_NAME, str(exc)); return
++        self.manifest_version_var.set(str(version))
++        self.manifest_status_var.set(f"Device Manifest sürümü manuel olarak v{version} yapıldı.")
++        self._refresh_manifest_preview()
+ 
+     def copy_secret(self):
+         try:
+@@ -1765,7 +1837,26 @@
+         try:
+             manifest_version = self._manifest_version()
+             sensor_keys = self._selected_manifest_sensor_keys()
++            same_identity = bool(self._loaded_identity_serial) and serial_no == self._loaded_identity_serial
++            if same_identity:
++                adjusted = next_manifest_version_for_sensor_change(
++                    manifest_version, self._loaded_manifest_version, self._loaded_manifest_sensors, sensor_keys
++                )
++                if adjusted != manifest_version:
++                    manifest_version = adjusted
++                    self.manifest_version_var.set(str(adjusted))
++                    self.manifest_status_var.set(
++                        f"Sensör seti değişti • Device Manifest otomatik v{adjusted} yapıldı."
++                    )
+             manifest_hash_hex = manifest_hash(serial_no, manifest_version, sensor_keys)
++            if (same_identity and self._loaded_manifest_version > 0
++                    and manifest_version == self._loaded_manifest_version
++                    and self._loaded_manifest_hash
++                    and not secrets.compare_digest(self._loaded_manifest_hash, manifest_hash_hex.lower())):
++                raise ValueError(
++                    f"Aynı manifest v{manifest_version} farklı sensör/hash ile yazılamaz. "
++                    "Manifest sürümünü artırın."
++                )
+         except Exception as exc:
+             messagebox.showerror(APP_NAME, f"Device Manifest geçersiz: {exc}"); return
+         if not SERIAL_RE.fullmatch(serial_no):
+@@ -1775,7 +1866,13 @@
+         if not valid_provision_secret(prov_secret):
+             length, _ = provision_secret_policy()
+             messagebox.showerror(APP_NAME, f"Kurulum kodu contract alfabesinden tam {length} karakter olmalı."); return
+-        if not messagebox.askyesno(APP_NAME, f"{serial_no} Factory Identity + Device Manifest yazılsın/güncellensin mi?\n\nSensörler: {', '.join(sensor_keys)}\nManifest v{manifest_version}\nHash: {manifest_hash_hex[:16]}…"):
++        service_manifest_update = (
++            bool(self._loaded_identity_serial)
++            and serial_no == self._loaded_identity_serial
++            and hwrev == self._loaded_identity_hwrev
++        )
++        storage_note = "KORUNACAK (servis manifest güncellemesi)" if service_manifest_update else ("TEMİZLENECEK" if self.clear_storage_var.get() else "KORUNACAK")
++        if not messagebox.askyesno(APP_NAME, f"{serial_no} Factory Identity + Device Manifest yazılsın/güncellensin mi?\n\nSensörler: {', '.join(sensor_keys)}\nManifest v{manifest_version}\nHash: {manifest_hash_hex[:16]}…\nStorage/queue: {storage_note}"):
+             return
+         def work():
+             self.post("progress", 8)
+@@ -1802,9 +1899,11 @@
+                     }
+                     self.post("progress", 88)
+                     self.post("log", f"[IDENTITY] factory_data identity+manifest yazma/readback PASS. sensors={','.join(sensor_keys)} hash={manifest_hash_hex}\n")
+-                    if self.clear_storage_var.get():
++                    if self.clear_storage_var.get() and not service_manifest_update:
+                         self._run_esptool(["--chip", "esp32", "--port", port, "--baud", str(self.settings.flash_baud), "erase-region", "0x320000", "0x0E0000"])
+                         self.post("log", "[IDENTITY] storage temizleme PASS.\n")
++                    elif service_manifest_update:
++                        self.post("log", "[IDENTITY] servis manifest güncellemesi: storage/queue korundu.\n")
+                 label_path, payload = self._save_label(self._default_label_path(serial_no), serial_no, prov_secret, manifest_hash_hex, sensor_keys)
+                 self.post("log", f"QR/etiket otomatik oluşturuldu: {label_path}\nQR: {payload}\n")
+             finally:
+--- a/tools/validate_production.py
++++ b/tools/validate_production.py
+@@ -13,7 +13,7 @@
+ 
+ checks = {
+     'source_clean': not any(R.rglob('__pycache__')) and not any(R.rglob('*.pyc')),
+-    'version': 'APP_VERSION = "0.6.3"' in s,
++    'version': 'APP_VERSION = "0.6.4"' in s,
+     'strict_contract': 'SYSTEM_CONTRACT = "VS-OIM3-STRICT-1"' in s,
+     'fw_version': 'REQUIRED_FIRMWARE_VERSION = "2.2.1"' in s,
+     'firmware_result_gate': 'if self.firmware != REQUIRED_FIRMWARE_VERSION:' in s,
+@@ -37,6 +37,9 @@
+     'external_bin_exact_hash_gate': 'approved_sha = str(self._approved_firmware_hashes().get("visionsen_oim3.bin")' in s,
+     'fw_manifest_target': str(fw.get('target') or '').lower() == 'esp32',
+     'fw_manifest_nonce': fw.get('nonce_mode') == 'counter-v1',
++    'manifest_sensor_change_autobump': 'next_manifest_version_for_sensor_change' in s and 'Sensör seti değişti • Device Manifest otomatik' in s,
++    'service_manifest_preserves_storage': 'servis manifest güncellemesi: storage/queue korundu' in s,
++    'manual_manifest_bump': 'def bump_manifest_version' in s and 'Sürüm +1' in s,
+ }
+ 
+ for name, expected in (fw.get('sha256') or {}).items():
+@@ -63,6 +66,15 @@
+     invalid_secret = (invalid_char * length)
+     checks['runtime_secret_accepts_contract'] = mod.valid_provision_secret(valid_secret)
+     checks['runtime_secret_rejects_outside_alphabet'] = not mod.valid_provision_secret(invalid_secret)
++    checks['manifest_autobump_runtime'] = mod.next_manifest_version_for_sensor_change(
++        1, 1, ('SHT45:1',), ('SHT45:1','BATTERY:1')
++    ) == 2
++    checks['manifest_same_sensors_no_bump_runtime'] = mod.next_manifest_version_for_sensor_change(
++        1, 1, ('SHT45:1',), ('SHT45:1',)
++    ) == 1
++    checks['manifest_manual_higher_version_preserved_runtime'] = mod.next_manifest_version_for_sensor_change(
++        4, 1, ('SHT45:1',), ('SHT45:1','BATTERY:1')
++    ) == 4
+ 
+     serial_no = 'ESP-1'
+     sensors = ('SHT45:1',)
