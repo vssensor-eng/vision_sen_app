@@ -9,9 +9,20 @@ TARGET = Path("factory_pc_tool_v068/visionsen_factory_tool.py")
 EXPECTED_SHA256 = "2f6d35020a2b5c0864c1f952dcdc9af8102bfb17a31c5748d14a27821f2b7b03"
 EXPECTED_B64_LENGTH = 40872
 
+names = [
+    "chunk00.txt",
+    "chunk01.txt",
+    "chunk02a.txt",
+    "chunk02b.txt",
+    "chunk02c.txt",
+    "chunk02d.txt",
+    "chunk03.txt",
+    "chunk04.txt",
+    "chunk05.txt",
+]
 parts = []
-for index in range(6):
-    p = PAYLOAD / f"chunk{index:02d}.txt"
+for name in names:
+    p = PAYLOAD / name
     if not p.is_file():
         raise SystemExit(f"Factory 0.6.8 payload chunk missing: {p}")
     parts.append(p.read_text(encoding="ascii").strip())
