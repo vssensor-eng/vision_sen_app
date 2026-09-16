@@ -1,0 +1,185 @@
+name: Build VisionSen Mobile v1.7.4+38 Final
+
+on:
+  push:
+    branches:
+      - mobile-v1.7.4-38-final
+    paths:
+      - '.github/workflows/build-mobile-v174-38-final.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  build-android:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Download verified v1.7.3+37 source artifact
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf /tmp/mobile173 mobile174
+          mkdir -p /tmp/mobile173 mobile174
+          gh run download 35126423583 --repo "$GITHUB_REPOSITORY" -n 'VisionSen-Mobile-v1.7.3+37-Final' -D /tmp/mobile173
+          tar -xzf '/tmp/mobile173/VisionSen-Mobile-v1.7.3+37-Final-source.tar.gz' -C mobile174
+          echo "MOBILE_ROOT=$PWD/mobile174" >> "$GITHUB_ENV"
+          python3 mobile174/tool/validate_strict.py
+
+      - name: Apply native local HTTP bridge fix
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd "$MOBILE_ROOT"
+          python3 - <<'PY'
+          from pathlib import Path
+
+          def replace(path, old, new, count=1):
+              p=Path(path); s=p.read_text(encoding='utf-8')
+              if old not in s:
+                  raise SystemExit(f'target missing: {path}: {old[:100]!r}')
+              p.write_text(s.replace(old,new,count),encoding='utf-8')
+
+          replace('pubspec.yaml','version: 1.7.3+37','version: 1.7.4+38')
+          replace('README.md','# VisionSen Mobil 1.7.3+37','# VisionSen Mobil 1.7.4+38')
+          replace('lib/models/device.dart',"  static const String mobileVersion = '1.7.3+37';","  static const String mobileVersion = '1.7.4+38';")
+          replace('tool/validate_strict.py',"'version':'version: 1.7.3+37' in t('pubspec.yaml'),","'version':'version: 1.7.4+38' in t('pubspec.yaml'),")
+          replace('tool/validate_strict.py',"'mobile_version_footer':\"static const String mobileVersion = '1.7.3+37';\" in model","'mobile_version_footer':\"static const String mobileVersion = '1.7.4+38';\" in model")
+
+          p=Path('tool/bootstrap_android.sh')
+          s=p.read_text(encoding='utf-8')
+          old='import java.net.Inet4Address\n'
+          new='import java.net.Inet4Address\nimport java.net.HttpURLConnection\nimport java.net.URL\n'
+          if old not in s: raise SystemExit('import marker missing')
+          s=s.replace(old,new,1)
+
+          old='''                "connectProvisioningWifi" -> connectProvisioningWifi(call, result)\n                "disconnectProvisioningWifi" -> {'''
+          new='''                "connectProvisioningWifi" -> connectProvisioningWifi(call, result)\n                "localHttpRequest" -> localHttpRequest(call, result)\n                "disconnectProvisioningWifi" -> {'''
+          if old not in s: raise SystemExit('method channel marker missing')
+          s=s.replace(old,new,1)
+
+          marker='''    private fun connectProvisioningWifi(call: MethodCall, result: MethodChannel.Result) {\n'''
+          method='''    private fun localHttpRequest(call: MethodCall, result: MethodChannel.Result) {\n        val network = activeNetwork\n        if (network == null) {\n            result.error(\n                "NO_PROVISIONING_NETWORK",\n                "VisionSen cihaz ağı bağlantısı aktif değil.",\n                null,\n            )\n            return\n        }\n\n        val method = call.argument<String>("method")?.trim()?.uppercase().orEmpty()\n        val path = call.argument<String>("path")?.trim().orEmpty()\n        val body = call.argument<String>("body") ?: ""\n        val timeoutMs = (call.argument<Number>("timeoutMs")?.toInt() ?: 6500).coerceIn(1000, 15000)\n\n        if (method != "GET" && method != "POST") {\n            result.error("LOCAL_HTTP_METHOD", "Yalnız GET ve POST desteklenir.", null)\n            return\n        }\n        if (!path.startsWith("/") || path.startsWith("//") || path.contains("://")) {\n            result.error("LOCAL_HTTP_PATH", "Yerel cihaz yolu geçersiz.", null)\n            return\n        }\n\n        Thread {\n            var connection: HttpURLConnection? = null\n            try {\n                val url = URL("http://192.168.4.1$path")\n                connection = network.openConnection(url) as HttpURLConnection\n                connection.requestMethod = method\n                connection.connectTimeout = timeoutMs\n                connection.readTimeout = timeoutMs\n                connection.instanceFollowRedirects = false\n                connection.useCaches = false\n                connection.setRequestProperty("Accept", "application/json")\n                connection.setRequestProperty("Connection", "close")\n\n                if (method == "POST") {\n                    connection.doOutput = true\n                    connection.setRequestProperty("Content-Type", "application/json; charset=utf-8")\n                    connection.outputStream.use { out ->\n                        out.write(body.toByteArray(Charsets.UTF_8))\n                        out.flush()\n                    }\n                }\n\n                val statusCode = connection.responseCode\n                val stream = if (statusCode in 200..399) connection.inputStream else connection.errorStream\n                val responseBody = stream?.bufferedReader(Charsets.UTF_8)?.use { it.readText() } ?: ""\n                runOnUiThread {\n                    result.success(\n                        mapOf(\n                            "statusCode" to statusCode,\n                            "body" to responseBody,\n                        )\n                    )\n                }\n            } catch (e: Exception) {\n                runOnUiThread {\n                    result.error(\n                        "LOCAL_HTTP",\n                        e.message ?: "VisionSen cihaz yerel HTTP isteği başarısız.",\n                        mapOf("type" to e.javaClass.simpleName),\n                    )\n                }\n            } finally {\n                connection?.disconnect()\n            }\n        }.start()\n    }\n\n'''
+          if marker not in s: raise SystemExit('connect function marker missing')
+          s=s.replace(marker,method+marker,1)
+          p.write_text(s,encoding='utf-8')
+
+          p=Path('tool/validate_strict.py')
+          s=p.read_text(encoding='utf-8')
+          old="    'native_disconnect_bridge':"
+          new="    'native_local_http_bridge': '\"localHttpRequest\" -> localHttpRequest(call, result)' in bootstrap and 'network.openConnection(url) as HttpURLConnection' in bootstrap and 'URL(\"http://192.168.4.1$path\")' in bootstrap,\n    'native_local_http_off_main_thread': 'Thread {' in bootstrap and 'runOnUiThread' in bootstrap,\n    'native_disconnect_bridge':"
+          if old not in s: raise SystemExit('validator bridge marker missing')
+          p.write_text(s.replace(old,new,1),encoding='utf-8')
+          PY
+          rm -rf tool/__pycache__
+          python3 tool/validate_strict.py
+          grep -F 'version: 1.7.4+38' pubspec.yaml
+          grep -F '"localHttpRequest" -> localHttpRequest(call, result)' tool/bootstrap_android.sh
+          grep -F 'network.openConnection(url) as HttpURLConnection' tool/bootstrap_android.sh
+
+      - name: Set up Java
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.24.0'
+          channel: stable
+          cache: false
+
+      - name: Prepare Android platform and verify native bridge
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd "$MOBILE_ROOT"
+          bash tool/bootstrap_android.sh
+          cat android-gradle.properties >> android/gradle.properties
+          echo 'dev.steenbakker.mobile_scanner.useUnbundled=true' >> android/gradle.properties
+          MAIN='android/app/src/main/kotlin/com/visionsen/visionsen_setup/MainActivity.kt'
+          MANIFEST='android/app/src/main/AndroidManifest.xml'
+          test -f "$MAIN"
+          grep -F 'android.permission.CHANGE_NETWORK_STATE' "$MANIFEST"
+          grep -F 'android:usesCleartextTraffic="true"' "$MANIFEST"
+          grep -F '"localHttpRequest" -> localHttpRequest(call, result)' "$MAIN"
+          grep -F 'network.openConnection(url) as HttpURLConnection' "$MAIN"
+          grep -F 'URL("http://192.168.4.1$path")' "$MAIN"
+          grep -F 'Thread {' "$MAIN"
+          grep -F 'cleanupCallback(this)' "$MAIN"
+
+      - name: Resolve packages
+        shell: bash
+        run: |
+          cd "$MOBILE_ROOT"
+          flutter pub get
+
+      - name: Analyze
+        shell: bash
+        run: |
+          cd "$MOBILE_ROOT"
+          flutter analyze --no-fatal-infos
+
+      - name: Test
+        shell: bash
+        run: |
+          cd "$MOBILE_ROOT"
+          flutter test
+
+      - name: Build release APK
+        shell: bash
+        run: |
+          cd "$MOBILE_ROOT"
+          flutter build apk --release
+
+      - name: Verify APK native local HTTP bridge and permissions
+        shell: bash
+        run: |
+          set -euo pipefail
+          APK="$MOBILE_ROOT/build/app/outputs/flutter-apk/app-release.apk"
+          unzip -p "$APK" classes.dex > /tmp/classes.dex
+          grep -aF 'connectProvisioningWifi' /tmp/classes.dex
+          grep -aF 'localHttpRequest' /tmp/classes.dex
+          grep -aF '192.168.4.1' /tmp/classes.dex
+          grep -aF 'HttpURLConnection' /tmp/classes.dex
+          AAPT="$(find "$ANDROID_HOME/build-tools" -type f -name aapt | sort -V | tail -n1)"
+          test -x "$AAPT"
+          "$AAPT" dump permissions "$APK" | tee /tmp/apk-permissions.txt
+          grep -F 'android.permission.CHANGE_NETWORK_STATE' /tmp/apk-permissions.txt
+          grep -F 'android.permission.NEARBY_WIFI_DEVICES' /tmp/apk-permissions.txt
+          if grep -aF 'scanProvisioningWifi' /tmp/classes.dex; then
+            echo 'Dead scanProvisioningWifi bridge found in APK'; exit 1
+          fi
+
+      - name: Package final APK source and hashes
+        shell: bash
+        run: |
+          set -euo pipefail
+          cp "$MOBILE_ROOT/build/app/outputs/flutter-apk/app-release.apk" VisionSen-Mobile-v1.7.4+38-Final.apk
+          rm -rf "$MOBILE_ROOT/tool/__pycache__"
+          find "$MOBILE_ROOT" -name '*.pyc' -delete
+          tar -czf VisionSen-Mobile-v1.7.4+38-Final-source.tar.gz -C "$MOBILE_ROOT" README.md analysis_options.yaml android-gradle.properties lib pubspec.yaml test tool
+          rm -rf /tmp/mobile174-check && mkdir /tmp/mobile174-check
+          tar -xzf VisionSen-Mobile-v1.7.4+38-Final-source.tar.gz -C /tmp/mobile174-check
+          python3 /tmp/mobile174-check/tool/validate_strict.py
+          sha256sum VisionSen-Mobile-v1.7.4+38-Final.apk VisionSen-Mobile-v1.7.4+38-Final-source.tar.gz > MOBILE-V174-SHA256SUMS.txt
+          cat MOBILE-V174-SHA256SUMS.txt
+
+      - name: Upload APK and source
+        uses: actions/upload-artifact@v4
+        with:
+          name: VisionSen-Mobile-v1.7.4+38-Final
+          path: |
+            VisionSen-Mobile-v1.7.4+38-Final.apk
+            VisionSen-Mobile-v1.7.4+38-Final-source.tar.gz
+            MOBILE-V174-SHA256SUMS.txt
+          if-no-files-found: error
+          retention-days: 30
