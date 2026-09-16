@@ -5,7 +5,7 @@ on:
     branches:
       - mobile-v1.7.0-34-final
     paths:
-      - 'mobile-build/v1.7.0-34/final_patch/**'
+      - 'mobile-build/v1.7.0-34/final_patch_safe/**'
       - '.github/workflows/build-mobile-v170-34-final.yml'
   workflow_dispatch:
 
@@ -91,7 +91,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          cat mobile-build/v1.7.0-34/final_patch/part-*.b64 | base64 -d > /tmp/mobile-final.raw.patch
+          cat mobile-build/v1.7.0-34/final_patch_safe/part-*.b64 | base64 -d | gzip -d > /tmp/mobile-final.raw.patch
           echo 'ebd6ccd11c58625b7fc6902dc3b3244632579eb682e7ed2af828e7a74f7a8c09  /tmp/mobile-final.raw.patch' | sha256sum -c -
           grep -v '^Binary files ' /tmp/mobile-final.raw.patch > /tmp/mobile-final.patch
           cd "$MOBILE_ROOT"
