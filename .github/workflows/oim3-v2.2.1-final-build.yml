@@ -1,0 +1,134 @@
+name: OIM3 v2.2.1 Production Final Build
+
+on:
+  push:
+    branches:
+      - oim3-build-v2.2.1-final
+    paths:
+      - 'oim3-build/v2.2.1/**'
+      - '.github/workflows/oim3-v2.2.1-final-build.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Download verified 2.2.0 final source artifact
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf /tmp/oim220 oim3-build/v2.2.1/project
+          mkdir -p /tmp/oim220 oim3-build/v2.2.1/project
+          gh run download 35088861410 --repo "$GITHUB_REPOSITORY" -n VisionSen-OIM3-v2.2.0-Production-Final -D /tmp/oim220
+          tar -xzf /tmp/oim220/VisionSen-OIM3-v2.2.0-Production-Final-source.tar.gz -C oim3-build/v2.2.1/project
+          rm -rf oim3-build/v2.2.1/project/managed_components/espressif__cjson/cJSON/.git
+          find oim3-build/v2.2.1/project -name '*.orig' -delete
+          rm -rf oim3-build/v2.2.1/project/tools/__pycache__
+
+      - name: Apply 2.2.1 release identity and packaging fixes
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat oim3-build/v2.2.1/patch/part-*.b64 | base64 -d | gzip -d > /tmp/v220-to-v221.patch
+          echo 'c8e2eb67b603f6549da3d2c796d59047b7c1a4607f9e54d1c7d45e7cf9b1b851  /tmp/v220-to-v221.patch' | sha256sum -c -
+          cd oim3-build/v2.2.1/project
+          patch --batch --forward --dry-run -p1 < /tmp/v220-to-v221.patch
+          patch --batch --forward -p1 < /tmp/v220-to-v221.patch
+          python3 tools/validate_strict.py
+          grep -F 'FIRMWARE_VERSION = "2.2.1"' components/oim_board/include/oim_board.hpp
+          grep -F 'VS-ESP-IDF-V2.2.1-OIM3-PRODUCTION-BASELINE' components/oim_board/include/oim_board.hpp
+
+      - name: Build ESP32 firmware with ESP-IDF v6.1
+        uses: espressif/esp-idf-ci-action@v1
+        with:
+          esp_idf_version: v6.1
+          target: esp32
+          path: oim3-build/v2.2.1/project
+          command: idf.py build
+
+      - name: Post-build clean source and revalidate
+        shell: bash
+        run: |
+          set -euo pipefail
+          P='oim3-build/v2.2.1/project'
+          rm -rf "$P/managed_components/espressif__cjson/cJSON/.git" "$P/tools/__pycache__"
+          find "$P" -name '*.orig' -delete
+          find "$P" -name '*.pyc' -delete
+          python3 "$P/tools/validate_strict.py"
+
+      - name: Collect final 2.2.1 artifacts
+        shell: bash
+        run: |
+          set -euo pipefail
+          P='oim3-build/v2.2.1/project/build'
+          S='oim3-build/v2.2.1/project'
+          A='oim3-build/v2.2.1/final-artifact'
+          rm -rf "$A"
+          mkdir -p "$A/full-flash"
+          cp "$P/bootloader/bootloader.bin" "$A/full-flash/bootloader.bin"
+          cp "$P/partition_table/partition-table.bin" "$A/full-flash/partition-table.bin"
+          cp "$P/ota_data_initial.bin" "$A/full-flash/ota_data_initial.bin"
+          cp "$P/visionsen_oim3.bin" "$A/full-flash/visionsen_oim3.bin"
+          strings "$A/full-flash/visionsen_oim3.bin" | grep -F 'VS-ESP-IDF-V2.2.1-OIM3-PRODUCTION-BASELINE'
+          strings "$A/full-flash/visionsen_oim3.bin" | grep -F 'VS-OIM3-STRICT-1'
+          strings "$A/full-flash/visionsen_oim3.bin" | grep -F 'VS-MANIFEST-1'
+          python3 - <<'PY'
+          from pathlib import Path
+          import hashlib,json
+          a=Path('oim3-build/v2.2.1/final-artifact/full-flash')
+          files=['bootloader.bin','partition-table.bin','ota_data_initial.bin','visionsen_oim3.bin']
+          hashes={n:hashlib.sha256((a/n).read_bytes()).hexdigest() for n in files}
+          flash_files={'0x1000':'bootloader.bin','0x8000':'partition-table.bin','0x10000':'ota_data_initial.bin','0x20000':'visionsen_oim3.bin'}
+          manifest={
+            'firmware_version':'2.2.1',
+            'firmware_name':'VS-ESP-IDF-V2.2.1-OIM3-PRODUCTION-BASELINE',
+            'system_contract':'VS-OIM3-STRICT-1',
+            'target':'esp32',
+            'esp_idf':'v6.1',
+            'provision_protocol':4,
+            'device_manifest_schema':1,
+            'nonce_mode':'counter-v1',
+            'max_channels_per_packet':32,
+            'provision_secret':{'length':8,'alphabet':'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'},
+            'protected_not_flashed':['factory_data','nonce_state','storage'],
+            'flash_files':flash_files,
+            'sha256':hashes,
+          }
+          flasher={
+            'write_flash_args':['--flash-mode','dio','--flash-size','4MB','--flash-freq','40m'],
+            'flash_settings':{'flash_mode':'dio','flash_size':'4MB','flash_freq':'40m'},
+            'flash_files':flash_files,
+            'extra_esptool_args':{'after':'hard-reset','before':'default-reset','stub':True,'chip':'esp32'},
+          }
+          (a/'visionsen_firmware_manifest.json').write_text(json.dumps(manifest,indent=2)+'\n')
+          (a/'flasher_args.json').write_text(json.dumps(flasher,indent=2)+'\n')
+          (a/'README.txt').write_text('VisionSen OIM3 2.2.1 Production Final\nNormal flash MUST NOT erase/write factory_data, nonce_state or storage.\nOffsets: 0x1000 bootloader, 0x8000 partition table, 0x10000 OTA data, 0x20000 application.\n')
+          (a/'SHA256SUMS.txt').write_text(''.join(f"{hashes[n]}  {n}\n" for n in files))
+          PY
+          tar --exclude='./build' --exclude='./artifact' --exclude='./final-artifact' -czf "$A/VisionSen-OIM3-v2.2.1-Production-Final-source.tar.gz" -C "$S" .
+          rm -rf /tmp/oim221-source-check && mkdir /tmp/oim221-source-check
+          tar -xzf "$A/VisionSen-OIM3-v2.2.1-Production-Final-source.tar.gz" -C /tmp/oim221-source-check
+          python3 /tmp/oim221-source-check/tools/validate_strict.py
+          test ! -e /tmp/oim221-source-check/managed_components/espressif__cjson/cJSON/.git
+          test -z "$(find /tmp/oim221-source-check -name '*.orig' -o -name '__pycache__' -o -name '*.pyc' -print -quit)"
+          (cd "$A/full-flash" && zip -q ../VisionSen-OIM3-v2.2.1-Production-Full-Flash-Final.zip *)
+          sha256sum "$A"/*.gz "$A"/*.zip > "$A/RELEASE_SHA256SUMS.txt"
+          cat "$A/RELEASE_SHA256SUMS.txt"
+
+      - name: Upload production final artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: VisionSen-OIM3-v2.2.1-Production-Final
+          path: oim3-build/v2.2.1/final-artifact/
+          if-no-files-found: error
+          retention-days: 30
