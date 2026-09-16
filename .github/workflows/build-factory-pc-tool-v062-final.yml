@@ -1,0 +1,238 @@
+name: Build VisionSen Factory PC Tool v0.6.2 Production Final
+
+on:
+  push:
+    branches:
+      - factory-pc-tool-v0.6.2
+    paths:
+      - 'factory-build/v0.6.1/v061-to-v062.patch'
+      - '.github/workflows/build-factory-pc-tool-v062-final.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+    timeout-minutes: 45
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.13'
+
+      - name: Reconstruct verified v0.6.1 source and apply v0.6.2 guard
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          $parts = Get-ChildItem factory-build/v0.6.1/source_safe/part-*.b64 | Sort-Object Name
+          if ($parts.Count -ne 5) { throw "Expected 5 source chunks, got $($parts.Count)" }
+          $b64 = ($parts | ForEach-Object { Get-Content $_.FullName -Raw }) -join ''
+          [IO.File]::WriteAllBytes('factory-v061.tar.gz',[Convert]::FromBase64String($b64))
+          $hash=(Get-FileHash factory-v061.tar.gz -Algorithm SHA256).Hash.ToLower()
+          if ($hash -ne 'a175c4332ef38bd245b8e01d4dea00302399c12b66ec11d1a60a7e291f6738ed') { throw "Factory source hash mismatch: $hash" }
+          New-Item -ItemType Directory -Force factory_pc_tool_v062 | Out-Null
+          tar -xzf factory-v061.tar.gz -C factory_pc_tool_v062
+          Push-Location factory_pc_tool_v062
+          patch --batch --forward -p1 < ../factory-build/v0.6.1/v061-to-v062.patch
+          if ($LASTEXITCODE -ne 0) { throw "v0.6.2 patch failed: $LASTEXITCODE" }
+          Pop-Location
+          python -m py_compile factory_pc_tool_v062/visionsen_factory_tool.py factory_pc_tool_v062/tools/validate_production.py
+          Select-String -Path factory_pc_tool_v062/visionsen_factory_tool.py -SimpleMatch 'APP_VERSION = "0.6.2"' | Out-Null
+          Select-String -Path factory_pc_tool_v062/visionsen_factory_tool.py -SimpleMatch 'def _approved_firmware_hashes' | Out-Null
+          Write-Host 'Factory v0.6.2 source reconstruction: PASS'
+
+      - name: Download verified final OIM3 v2.2.0 firmware
+        uses: actions/download-artifact@v4
+        with:
+          name: VisionSen-OIM3-v2.2.0-Production-Final
+          path: firmware-raw
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          run-id: 35088861410
+
+      - name: Prepare approved embedded firmware and metadata
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          @'
+          import hashlib, json, shutil
+          from pathlib import Path
+
+          src = Path('firmware-raw/full-flash')
+          out = Path('factory_pc_tool_v062/firmware')
+          out.mkdir(parents=True, exist_ok=True)
+          expected = {
+              'bootloader.bin':'b8bf5b4a922079e21ce1b885224acd9b39fbcfa80de9d1231f282118d75f7739',
+              'partition-table.bin':'4e4f13ef32d3f53b8c66d046047112160a8494205577d1622cabe70b7ce40519',
+              'ota_data_initial.bin':'7d2c7ac4888bfd75cd5f56e8d61f69595121183afc81556c876732fd3782c62f',
+              'visionsen_oim3.bin':'109b07925dfd1e9e1e57c766109ca1ba0051940960667bd96199a46ffba38098',
+          }
+          for name, want in expected.items():
+              p = src / name
+              if not p.is_file():
+                  raise SystemExit(f'missing firmware file: {p}')
+              got = hashlib.sha256(p.read_bytes()).hexdigest()
+              if got != want:
+                  raise SystemExit(f'firmware hash mismatch {name}: {got}')
+              shutil.copy2(p, out / name)
+
+          app = (out/'visionsen_oim3.bin').read_bytes()
+          for marker in (b'VS-ESP-IDF-V2.2.0-OIM3-PRODUCTION-BASELINE', b'VS-OIM3-STRICT-1'):
+              if marker not in app:
+                  raise SystemExit(f'firmware marker missing: {marker!r}')
+
+          flash_files={'0x1000':'bootloader.bin','0x8000':'partition-table.bin','0x10000':'ota_data_initial.bin','0x20000':'visionsen_oim3.bin'}
+          flasher = {
+              'write_flash_args':['--flash-mode','dio','--flash-size','4MB','--flash-freq','40m'],
+              'flash_settings':{'flash_mode':'dio','flash_size':'4MB','flash_freq':'40m'},
+              'flash_files':flash_files,
+              'extra_esptool_args':{'after':'hard-reset','before':'default-reset','stub':True,'chip':'esp32'},
+          }
+          (out/'flasher_args.json').write_text(json.dumps(flasher,indent=2)+'\n',encoding='utf-8')
+          manifest = {
+              'release':'VisionSen OIM3 Production Final',
+              'firmware_version':'2.2.0',
+              'firmware_name':'VS-ESP-IDF-V2.2.0-OIM3-PRODUCTION-BASELINE',
+              'system_contract':'VS-OIM3-STRICT-1',
+              'target':'esp32',
+              'esp_idf':'v6.1',
+              'qr_format':'VS2',
+              'provision_protocol':4,
+              'factory_identity_schema':2,
+              'device_manifest_schema':1,
+              'manifest_schema':1,
+              'nonce_mode':'counter-v1',
+              'max_channels_per_packet':32,
+              'protected_not_flashed':{
+                  'factory_data':'0x12000..0x17fff',
+                  'nonce_state':'0x18000..0x1ffff',
+                  'storage':'0x320000..0x3fffff',
+              },
+              'flash_files':flash_files,
+              'sha256': expected,
+          }
+          (out/'visionsen_firmware_manifest.json').write_text(json.dumps(manifest,indent=2)+'\n',encoding='utf-8')
+          print('Embedded firmware cross-check and metadata: PASS')
+          '@ | Set-Content prepare_final_firmware.py -Encoding UTF8
+          python prepare_final_firmware.py
+          Push-Location factory_pc_tool_v062
+          python tools/validate_production.py
+          Pop-Location
+
+      - name: Test stale same-version firmware rejection
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          @'
+          import hashlib, importlib.util, json, sys, tempfile, zipfile
+          from pathlib import Path
+
+          root=Path('factory_pc_tool_v062').resolve()
+          spec=importlib.util.spec_from_file_location('ft062',root/'visionsen_factory_tool.py')
+          mod=importlib.util.module_from_spec(spec); sys.modules[spec.name]=mod; spec.loader.exec_module(mod)
+          app=object.__new__(mod.VisionSenFactoryApp)
+          fw=root/'firmware'
+
+          with tempfile.TemporaryDirectory() as td:
+              td=Path(td)
+              # Approved ZIP must pass.
+              approved=td/'approved.zip'
+              with zipfile.ZipFile(approved,'w',zipfile.ZIP_DEFLATED) as z:
+                  for name in ('bootloader.bin','partition-table.bin','ota_data_initial.bin','visionsen_oim3.bin','flasher_args.json','visionsen_firmware_manifest.json'):
+                      z.write(fw/name,arcname=name)
+              app._inspect_firmware_zip(approved)
+
+              # Build an internally self-consistent but non-approved same-version ZIP.
+              stale_dir=td/'stale'; stale_dir.mkdir()
+              for name in ('bootloader.bin','partition-table.bin','ota_data_initial.bin','visionsen_oim3.bin','flasher_args.json','visionsen_firmware_manifest.json'):
+                  (stale_dir/name).write_bytes((fw/name).read_bytes())
+              b=bytearray((stale_dir/'bootloader.bin').read_bytes()); b[-1] ^= 1; (stale_dir/'bootloader.bin').write_bytes(b)
+              m=json.loads((stale_dir/'visionsen_firmware_manifest.json').read_text(encoding='utf-8'))
+              m['sha256']['bootloader.bin']=hashlib.sha256((stale_dir/'bootloader.bin').read_bytes()).hexdigest()
+              (stale_dir/'visionsen_firmware_manifest.json').write_text(json.dumps(m,indent=2)+'\n',encoding='utf-8')
+              stale=td/'stale.zip'
+              with zipfile.ZipFile(stale,'w',zipfile.ZIP_DEFLATED) as z:
+                  for p in stale_dir.iterdir(): z.write(p,arcname=p.name)
+              try:
+                  app._inspect_firmware_zip(stale)
+              except RuntimeError as exc:
+                  if 'onaylı VisionSen final build ile eşleşmiyor' not in str(exc): raise
+              else:
+                  raise SystemExit('same-version stale ZIP was accepted')
+
+              # Same-version stale app BIN must also fail exact approved SHA gate.
+              stale_app=td/'stale-app.bin'
+              b=bytearray((fw/'visionsen_oim3.bin').read_bytes()); b[-1] ^= 1; stale_app.write_bytes(b)
+              try:
+                  app._inspect_app_bin(stale_app)
+              except RuntimeError as exc:
+                  if 'onaylı VisionSen final build ile eşleşmiyor' not in str(exc): raise
+              else:
+                  raise SystemExit('same-version stale app BIN was accepted')
+          print('Same-version stale firmware rejection: PASS')
+          '@ | Set-Content test_release_guard.py -Encoding UTF8
+          python test_release_guard.py
+
+      - name: Install standalone dependencies
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          python -m pip install --upgrade pip
+          python -m pip install -r factory_pc_tool_v062/requirements.txt
+          python -m pip install pyinstaller
+
+      - name: Build standalone Windows EXE
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          python -m PyInstaller --noconfirm --clean --onefile --windowed `
+            --name VisionSen-Factory-PC-Tool-v0.6.2-Production-Final `
+            --add-data "factory_pc_tool_v062/firmware;firmware" `
+            --add-data "factory_pc_tool_v062/protocol;protocol" `
+            --collect-all esptool `
+            --collect-all esp_idf_nvs_partition_gen `
+            --collect-all esp_pylib `
+            --collect-all rich_click `
+            factory_pc_tool_v062/visionsen_factory_tool.py
+          if ($LASTEXITCODE -ne 0) { throw "PyInstaller failed: $LASTEXITCODE" }
+          $exe='dist/VisionSen-Factory-PC-Tool-v0.6.2-Production-Final.exe'
+          if (-not (Test-Path $exe)) { throw 'Final EXE missing' }
+          Get-FileHash $exe -Algorithm SHA256 | Format-List
+
+      - name: Create final self-contained source package
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          New-Item -ItemType Directory -Force package-source | Out-Null
+          Copy-Item factory_pc_tool_v062/visionsen_factory_tool.py package-source/
+          Copy-Item factory_pc_tool_v062/requirements.txt package-source/
+          Copy-Item factory_pc_tool_v062/RELEASE_NOTES-v0.6.2.md package-source/
+          Copy-Item -Recurse factory_pc_tool_v062/firmware package-source/firmware
+          Copy-Item -Recurse factory_pc_tool_v062/protocol package-source/protocol
+          Copy-Item -Recurse factory_pc_tool_v062/tools package-source/tools
+          Compress-Archive -Path package-source/* -DestinationPath VisionSen-Factory-PC-Tool-v0.6.2-Production-Final-source.zip -Force
+          $exe='dist/VisionSen-Factory-PC-Tool-v0.6.2-Production-Final.exe'
+          $src='VisionSen-Factory-PC-Tool-v0.6.2-Production-Final-source.zip'
+          $exeHash=(Get-FileHash $exe -Algorithm SHA256).Hash.ToLower()
+          $srcHash=(Get-FileHash $src -Algorithm SHA256).Hash.ToLower()
+          "$exeHash  VisionSen-Factory-PC-Tool-v0.6.2-Production-Final.exe" | Set-Content FACTORY-FINAL-SHA256SUMS.txt -Encoding ascii
+          "$srcHash  VisionSen-Factory-PC-Tool-v0.6.2-Production-Final-source.zip" | Add-Content FACTORY-FINAL-SHA256SUMS.txt -Encoding ascii
+          Get-Content FACTORY-FINAL-SHA256SUMS.txt
+
+      - name: Upload final Windows package
+        uses: actions/upload-artifact@v4
+        with:
+          name: VisionSen-Factory-PC-Tool-v0.6.2-Production-Final-Windows
+          path: |
+            dist/VisionSen-Factory-PC-Tool-v0.6.2-Production-Final.exe
+            VisionSen-Factory-PC-Tool-v0.6.2-Production-Final-source.zip
+            FACTORY-FINAL-SHA256SUMS.txt
+            factory_pc_tool_v062/firmware/visionsen_firmware_manifest.json
+            factory_pc_tool_v062/firmware/flasher_args.json
+          if-no-files-found: error
+          retention-days: 30
