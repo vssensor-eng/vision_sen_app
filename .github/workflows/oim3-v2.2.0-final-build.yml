@@ -5,7 +5,7 @@ on:
     branches:
       - oim3-build-v2.2.0-final
     paths:
-      - 'oim3-build/v2.2.0/final_patch/final.patch.gz.b64'
+      - 'oim3-build/v2.2.0/final_patch_safe/**'
       - '.github/workflows/oim3-v2.2.0-final-build.yml'
   workflow_dispatch:
 
@@ -117,7 +117,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          base64 -d oim3-build/v2.2.0/final_patch/final.patch.gz.b64 | gzip -d > /tmp/final-v220.patch
+          cat oim3-build/v2.2.0/final_patch_safe/part-*.b64 | base64 -d | gzip -d > /tmp/final-v220.patch
           echo 'fcd8f019f84a8e9a6a031daed4ee93a73314a717c11965c04db2b3caf37eeefd  /tmp/final-v220.patch' | sha256sum -c -
           cd oim3-build/v2.2.0/project
           patch --batch --forward --dry-run -p1 < /tmp/final-v220.patch
