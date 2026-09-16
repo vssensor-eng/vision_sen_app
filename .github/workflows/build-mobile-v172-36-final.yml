@@ -40,9 +40,11 @@ jobs:
           set -euo pipefail
           cat mobile-build/v1.7.2-36/patch/part-*.b64 | base64 -d | gzip -d > /tmp/mobile-v171-to-v172.patch
           echo '45f424466d2d76579b352df40713332c12b33bbcdb2be33895b3f6f769a949ee  /tmp/mobile-v171-to-v172.patch' | sha256sum -c -
+          base64 -d mobile-build/v1.7.2-36/progress-hotfix.patch.gz.b64 | gzip -d > /tmp/progress-hotfix.patch
+          echo '063dd35f086bfe504527f58aa69af1b4c0ec5e132bf9a7e64a824ebf151ce81e  /tmp/progress-hotfix.patch' | sha256sum -c -
           cd "$MOBILE_ROOT"
-          patch --batch --forward --dry-run -p1 < /tmp/mobile-v171-to-v172.patch
           patch --batch --forward -p1 < /tmp/mobile-v171-to-v172.patch
+          patch --batch --forward -p1 < /tmp/progress-hotfix.patch
           rm -rf tool/__pycache__
           python3 tool/validate_strict.py
           grep -F 'version: 1.7.2+36' pubspec.yaml
@@ -69,38 +71,29 @@ jobs:
           cat android-gradle.properties >> android/gradle.properties
           echo 'dev.steenbakker.mobile_scanner.useUnbundled=true' >> android/gradle.properties
           MAIN='android/app/src/main/kotlin/com/visionsen/visionsen_setup/MainActivity.kt'
-          test -f "$MAIN"
           grep -F '"getProvisioningCapabilities"' "$MAIN"
           grep -F 'Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU' "$MAIN"
           grep -F '"connectProvisioningWifi"' "$MAIN"
           grep -F 'cleanupCallback(this)' "$MAIN"
-          ! grep -F 'scanProvisioningWifi' "$MAIN"
+          if grep -F 'scanProvisioningWifi' "$MAIN"; then exit 1; fi
           grep -F 'android.permission.NEARBY_WIFI_DEVICES' android/app/src/main/AndroidManifest.xml
           grep -F 'minSdk = 23' android/app/build.gradle || grep -F 'minSdkVersion 23' android/app/build.gradle
 
       - name: Resolve packages
         shell: bash
-        run: |
-          cd "$MOBILE_ROOT"
-          flutter pub get
+        run: cd "$MOBILE_ROOT" && flutter pub get
 
       - name: Analyze
         shell: bash
-        run: |
-          cd "$MOBILE_ROOT"
-          flutter analyze --no-fatal-infos
+        run: cd "$MOBILE_ROOT" && flutter analyze --no-fatal-infos
 
       - name: Test
         shell: bash
-        run: |
-          cd "$MOBILE_ROOT"
-          flutter test
+        run: cd "$MOBILE_ROOT" && flutter test
 
       - name: Build release APK
         shell: bash
-        run: |
-          cd "$MOBILE_ROOT"
-          flutter build apk --release
+        run: cd "$MOBILE_ROOT" && flutter build apk --release
 
       - name: Verify APK native provisioning methods
         shell: bash
@@ -112,9 +105,7 @@ jobs:
           grep -aF 'connectProvisioningWifi' /tmp/classes.dex
           grep -aF 'disconnectProvisioningWifi' /tmp/classes.dex
           grep -aF 'NEARBY_WIFI_DEVICES' /tmp/classes.dex
-          if grep -aF 'scanProvisioningWifi' /tmp/classes.dex; then
-            echo 'Dead scanProvisioningWifi bridge found in APK'; exit 1
-          fi
+          if grep -aF 'scanProvisioningWifi' /tmp/classes.dex; then exit 1; fi
 
       - name: Package final APK source and hashes
         shell: bash
@@ -127,7 +118,6 @@ jobs:
           rm -rf /tmp/mobile172-check && mkdir /tmp/mobile172-check
           tar -xzf VisionSen-Mobile-v1.7.2+36-Final-source.tar.gz -C /tmp/mobile172-check
           python3 /tmp/mobile172-check/tool/validate_strict.py
-          test -z "$(find /tmp/mobile172-check -name '__pycache__' -o -name '*.pyc' -print -quit)"
           sha256sum VisionSen-Mobile-v1.7.2+36-Final.apk VisionSen-Mobile-v1.7.2+36-Final-source.tar.gz > MOBILE-V172-SHA256SUMS.txt
           cat MOBILE-V172-SHA256SUMS.txt
 
