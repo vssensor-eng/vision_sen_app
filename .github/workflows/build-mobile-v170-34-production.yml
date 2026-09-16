@@ -40,12 +40,16 @@ jobs:
           echo 'f51092b36e8d9688503552a946df697469def9130b35cbc9443ff186f4f28fda  /tmp/mobile170.tar.gz' | sha256sum -c -
           mkdir mobile170
           tar -xzf /tmp/mobile170.tar.gz -C mobile170
-          cd mobile170
+          PUBSPEC="$(find mobile170 -maxdepth 3 -type f -name pubspec.yaml | head -n1)"
+          test -n "$PUBSPEC"
+          MOBILE_ROOT="$(dirname "$PUBSPEC")"
+          echo "MOBILE_ROOT=$MOBILE_ROOT" >> "$GITHUB_ENV"
+          cd "$MOBILE_ROOT"
           grep -F 'version: 1.7.0+34' pubspec.yaml
           python3 tool/validate_strict.py
           ! grep -R "VS1" -n lib test tool README.md
           ! grep -R "protocol 3\|protocol_version.*3\|legacy_default" -n lib test tool README.md
-          echo 'Mobile self-contained source: PASS'
+          echo "Mobile self-contained source: PASS ($MOBILE_ROOT)"
 
       - name: Set up Java
         uses: actions/setup-java@v4
@@ -62,35 +66,43 @@ jobs:
 
       - name: Prepare Android platform
         shell: bash
-        working-directory: mobile170
         run: |
           set -euo pipefail
+          cd "$MOBILE_ROOT"
           bash tool/bootstrap_android.sh
           cat android-gradle.properties >> android/gradle.properties
           echo 'dev.steenbakker.mobile_scanner.useUnbundled=true' >> android/gradle.properties
 
       - name: Resolve packages
-        working-directory: mobile170
-        run: flutter pub get
+        shell: bash
+        run: |
+          cd "$MOBILE_ROOT"
+          flutter pub get
 
       - name: Analyze
-        working-directory: mobile170
-        run: flutter analyze --no-fatal-infos
+        shell: bash
+        run: |
+          cd "$MOBILE_ROOT"
+          flutter analyze --no-fatal-infos
 
       - name: Test
-        working-directory: mobile170
-        run: flutter test
+        shell: bash
+        run: |
+          cd "$MOBILE_ROOT"
+          flutter test
 
       - name: Build release APK
-        working-directory: mobile170
-        run: flutter build apk --release
+        shell: bash
+        run: |
+          cd "$MOBILE_ROOT"
+          flutter build apk --release
 
       - name: Package source and hashes
         shell: bash
         run: |
           set -euo pipefail
-          cp mobile170/build/app/outputs/flutter-apk/app-release.apk VisionSen-Mobile-v1.7.0+34.apk
-          tar -czf VisionSen-Mobile-v1.7.0+34-source.tar.gz -C mobile170 README.md analysis_options.yaml android-gradle.properties lib pubspec.yaml test tool
+          cp "$MOBILE_ROOT/build/app/outputs/flutter-apk/app-release.apk" VisionSen-Mobile-v1.7.0+34.apk
+          tar -czf VisionSen-Mobile-v1.7.0+34-source.tar.gz -C "$MOBILE_ROOT" README.md analysis_options.yaml android-gradle.properties lib pubspec.yaml test tool
           sha256sum VisionSen-Mobile-v1.7.0+34.apk VisionSen-Mobile-v1.7.0+34-source.tar.gz > SHA256SUMS.txt
           cat SHA256SUMS.txt
 
