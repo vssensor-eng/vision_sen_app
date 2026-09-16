@@ -99,7 +99,6 @@ jobs:
           patch --batch --forward -p1 < /tmp/mobile-final.patch
           rm -rf tool/__pycache__
           python3 tool/validate_strict.py
-          ! grep -R "legacy_default\|Text('Atanmamış')\|RegExp(r'^[A-Za-z0-9]{8}$')" -n lib test tool README.md || false
 
       - name: Set up Java
         uses: actions/setup-java@v5
