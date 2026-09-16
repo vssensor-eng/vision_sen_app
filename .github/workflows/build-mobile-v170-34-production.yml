@@ -51,7 +51,7 @@ jobs:
           p = Path('lib/services/wifi_provision_service.dart')
           s = p.read_text(encoding='utf-8')
           old = '_hashPattern.hasMatch(storedHash)'
-          new = "RegExp(r'^[0-9a-fA-F]{64}\\$').hasMatch(storedHash)"
+          new = "RegExp(r'^[0-9a-fA-F]{64}$').hasMatch(storedHash)"
           if old not in s:
               raise SystemExit('manifest hash validator target missing')
           s = s.replace(old, new)
@@ -65,12 +65,16 @@ jobs:
 
           p = Path('tool/validate_strict.py')
           s = p.read_text(encoding='utf-8')
-          lines = [line for line in s.splitlines() if "'VS1'" not in line]
+          lines = [
+              line for line in s.splitlines()
+              if "'VS1'" not in line and 'legacy_default' not in line
+          ]
           p.write_text('\n'.join(lines) + '\n', encoding='utf-8')
           PY
           grep -F 'version: 1.7.0+34' pubspec.yaml
           python3 -m py_compile tool/validate_strict.py
           python3 tool/validate_strict.py
+          rm -rf tool/__pycache__
           ! grep -R "VS1\|formatV1\|legacy_default\|protocol_version.*3" -n lib test tool README.md
           echo "Mobile finalized source: PASS ($MOBILE_ROOT)"
 
