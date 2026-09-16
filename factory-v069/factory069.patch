@@ -1,0 +1,192 @@
+--- a/visionsen_factory_tool.py
++++ b/visionsen_factory_tool.py
+@@ -54,7 +54,7 @@
+     nvsgen = None
+ 
+ APP_NAME = "VisionSen Factory Tool"
+-APP_VERSION = "0.6.8"
++APP_VERSION = "0.6.9"
+ BUILD_MARKER = "production-baseline-strict"
+ CONFIG_FILE = Path.home() / ".visionsen_factory_tool.json"
+ DEFAULT_REPORT = Path.home() / "VisionSenFactory" / "production_records.csv"
+@@ -572,8 +572,8 @@
+ 
+         self.configure(bg=BG)
+         self.title(f"VisionSen Üretim ve Kalite Kontrol v{APP_VERSION}")
+-        self.geometry("1180x980")
+-        self.minsize(1080, 820)
++        self.geometry("1500x920")
++        self.minsize(1180, 760)
+ 
+         style = ttk.Style(self)
+         try:
+@@ -650,13 +650,14 @@
+         tk.Label(conn, textvariable=self.com_status_var, bg=PANEL, fg=MUTED,
+                  font=("Segoe UI", 9, "bold"), anchor="w").grid(row=2, column=0, columnspan=5, sticky="ew", padx=2, pady=(2, 1))
+ 
+-        # İşlem alanı ve teknik log arasında sürüklenebilir ayırıcı.
+-        self.main_pane = tk.PanedWindow(root, orient="vertical", sashwidth=8, sashrelief="raised",
++        # Sol iş akışı ve sağ teknik log arasında sürüklenebilir dikey ayırıcı.
++        # Teknik log her zaman görünür kalır; operatör yalnız panel genişliğini değiştirir.
++        self.main_pane = tk.PanedWindow(root, orient="horizontal", sashwidth=8, sashrelief="raised",
+                                         bg=BORDER, bd=0, relief="flat")
+         self.main_pane.grid(row=2, column=0, sticky="nsew")
+         tabs_holder = tk.Frame(self.main_pane, bg=BG)
+         tabs_holder.rowconfigure(0, weight=1); tabs_holder.columnconfigure(0, weight=1)
+-        self.main_pane.add(tabs_holder, minsize=340, stretch="always")
++        self.main_pane.add(tabs_holder, minsize=700, stretch="always")
+ 
+         self.workflow_tabs = ttk.Notebook(tabs_holder, style="VS.TNotebook")
+         self.workflow_tabs.grid(row=0, column=0, sticky="nsew")
+@@ -874,26 +875,40 @@
+         self.service_qr_button.pack(side="left", padx=4)
+         tk.Label(sqr, text="Servis testi PASS olduğunda etkinleşir.", bg=PANEL, fg=MUTED, font=("Segoe UI", 8)).pack(side="left", padx=10)
+ 
+-        # Ortak teknik log her zaman görünür. Pencere köşeden büyütüldükçe bu alan da büyür.
++        # Teknik log sağ tarafta sürekli görünür. Sol iş akışı ve log bağımsız kaydırılır.
+         log_wrap = tk.Frame(self.main_pane, bg=BG)
+-        self.main_pane.add(log_wrap, minsize=260, stretch="always")
++        self.main_pane.add(log_wrap, minsize=390, stretch="always")
+         log_wrap.rowconfigure(1, weight=1); log_wrap.columnconfigure(0, weight=1)
+-        log_head = tk.Frame(log_wrap, bg=BG); log_head.grid(row=0, column=0, sticky="ew")
+-        tk.Label(log_head, text="Teknik Log", bg=BG, fg=FG, font=("Segoe UI", 9, "bold")).pack(side="left")
++        log_head = tk.Frame(log_wrap, bg=BG)
++        log_head.grid(row=0, column=0, sticky="ew", padx=(8, 0), pady=(0, 4))
++        log_head.columnconfigure(0, weight=1)
++        tk.Label(log_head, text="TEKNİK LOG", bg=BG, fg=FG, font=("Segoe UI", 10, "bold")).grid(row=0, column=0, sticky="w")
++        self.log_autoscroll_var = tk.BooleanVar(value=True)
++        btn(log_head, "Temizle", lambda: self.log_text.delete("1.0", "end"), width=8).grid(row=0, column=1, padx=(4, 2))
++        btn(log_head, "Kopyala", self.copy_log, width=8).grid(row=0, column=2, padx=2)
++        btn(log_head, "Kaydet", self.save_log, width=8).grid(row=0, column=3, padx=2)
++        tk.Checkbutton(log_head, text="Otomatik Kaydır", variable=self.log_autoscroll_var,
++                       bg=BG, fg=FG, selectcolor=BG, activebackground=BG, activeforeground=FG,
++                       font=("Segoe UI", 8, "bold")).grid(row=0, column=4, padx=(8, 0), sticky="e")
++
+         self.log_frame = tk.Frame(log_wrap, bg=BG, bd=1, relief="solid", highlightbackground=BORDER)
+-        self.log_frame.grid(row=1, column=0, sticky="nsew", pady=(4, 0))
++        self.log_frame.grid(row=1, column=0, sticky="nsew", padx=(8, 0))
+         self.log_frame.rowconfigure(0, weight=1); self.log_frame.columnconfigure(0, weight=1)
+-        self.log_text = tk.Text(self.log_frame, wrap="none", height=24, bg="#000716", fg="#e7edf8",
++        self.log_text = tk.Text(self.log_frame, wrap="none", bg="#000716", fg="#e7edf8",
+                                 insertbackground="#ffffff", selectbackground="#274b7a", font=("Consolas", 9), relief="flat", bd=0)
+-        self.log_text.grid(row=0, column=0, sticky="nsew", padx=5, pady=5)
+-        sy = tk.Scrollbar(self.log_frame, orient="vertical", command=self.log_text.yview); sy.grid(row=0, column=1, sticky="ns")
+-        self.log_text.configure(yscrollcommand=sy.set)
++        self.log_text.grid(row=0, column=0, sticky="nsew", padx=(6, 0), pady=(6, 0))
++        sy = tk.Scrollbar(self.log_frame, orient="vertical", command=self.log_text.yview)
++        sy.grid(row=0, column=1, sticky="ns", pady=(6, 0))
++        sx = tk.Scrollbar(self.log_frame, orient="horizontal", command=self.log_text.xview)
++        sx.grid(row=1, column=0, sticky="ew", padx=(6, 0), pady=(0, 6))
++        self.log_text.configure(yscrollcommand=sy.set, xscrollcommand=sx.set)
+ 
+         footer = tk.Frame(root, bg=BG)
+         footer.grid(row=3, column=0, sticky="ew", pady=(8, 0))
+-        self.after_idle(lambda: self.main_pane.sash_place(0, 0, max(410, int(self.winfo_height() * 0.56))))
++        # İlk açılışta yaklaşık %68 iş akışı / %32 log görünümü. Ayırıcı elle sürüklenebilir.
++        self.after_idle(self._place_initial_log_sash)
+         btn(footer, "Ayarlar", self.open_settings, width=10).pack(side="left")
+-        btn(footer, "Logu Temizle", lambda: self.log_text.delete("1.0", "end"), width=11).pack(side="left", padx=6)
++        tk.Label(footer, text="Teknik log sağ panelde sürekli açıktır.", bg=BG, fg=MUTED, font=("Segoe UI", 8)).pack(side="left", padx=10)
+         tk.Label(footer, text=f"v{APP_VERSION}", bg=BG, fg=FG, font=("Segoe UI", 8)).pack(side="right")
+ 
+         for var in (self.serial_var, self.manifest_version_var, self.manifest_sht45_var, self.manifest_battery_var):
+@@ -902,6 +917,45 @@
+         self.after(0, self._refresh_service_manifest_summary)
+         self._set_device_controls(False)
+ 
++    def _place_initial_log_sash(self) -> None:
++        """Place the right-side technical log at about one third of usable width."""
++        try:
++            width = max(1180, int(self.main_pane.winfo_width() or self.winfo_width() or 1500))
++            self.main_pane.sash_place(0, int(width * 0.68), 0)
++        except Exception:
++            pass
++
++    def _scroll_log_if_enabled(self) -> None:
++        try:
++            if getattr(self, "log_autoscroll_var", None) is None or self.log_autoscroll_var.get():
++                self.log_text.see("end")
++        except Exception:
++            pass
++
++    def copy_log(self) -> None:
++        try:
++            text = self.log_text.get("1.0", "end-1c")
++            self.clipboard_clear()
++            self.clipboard_append(text)
++            self.global_status.configure(text="Teknik log panoya kopyalandı", fg=self._ui_colors["green"])
++        except Exception as exc:
++            messagebox.showerror("Log Kopyalama Hatası", str(exc))
++
++    def save_log(self) -> None:
++        path_text = filedialog.asksaveasfilename(
++            title="Teknik Logu Kaydet",
++            defaultextension=".log",
++            filetypes=[("Log dosyası", "*.log"), ("Metin dosyası", "*.txt"), ("Tüm dosyalar", "*.*")],
++            initialfile=f"VisionSen-Factory-{datetime.now().strftime('%Y%m%d-%H%M%S')}.log",
++        )
++        if not path_text:
++            return
++        try:
++            Path(path_text).write_text(self.log_text.get("1.0", "end-1c"), encoding="utf-8")
++            self.global_status.configure(text="Teknik log kaydedildi", fg=self._ui_colors["green"])
++        except Exception as exc:
++            messagebox.showerror("Log Kaydetme Hatası", str(exc))
++
+     def _on_manifest_ui_change(self, *_args) -> None:
+         # Birden fazla checkbox/programatik set sırasında geçici olarak sensörsüz ara durum oluşabilir.
+         # Bu UI güncellemesi hata penceresi üretmemeli; strict doğrulama yalnız yazma/QR aşamasında yapılır.
+@@ -1072,7 +1126,7 @@
+                 kind, text = self.msgq.get_nowait()
+                 if kind == "log":
+                     self.log_text.insert("end", str(text))
+-                    self.log_text.see("end")
++                    self._scroll_log_if_enabled()
+                 elif kind == "status":
+                     if isinstance(text, tuple):
+                         self._set_global_status(str(text[0]), str(text[1]))
+@@ -1543,7 +1597,7 @@
+         self._set_progress(55)
+         self._set_global_status("Cihaz bağlı • kimlik okunuyor", "busy")
+         self.log_text.insert("end", f"\n[COM] {port} ESP32 handshake doğrulandı. MAC: {self._last_device_mac or '—'}\n")
+-        self.log_text.see("end")
++        self._scroll_log_if_enabled()
+         self.after(120, self._auto_read_identity_after_connect)
+ 
+     def _auto_read_identity_after_connect(self):
+@@ -1616,7 +1670,7 @@
+         self.log_text.insert("end", "\n[COM] Bağlantı kapatıldı; ESP32 normal çalışmaya resetlendi.\n")
+         if reset_error is not None:
+             self.log_text.insert("end", f"[COM] Reset hattı uyarısı: {reset_error}\n")
+-        self.log_text.see("end")
++        self._scroll_log_if_enabled()
+ 
+     def _release_com_for_operation(self) -> None:
+         self.require_connected()
+@@ -1915,7 +1969,7 @@
+         self.firmware_info_var.set(f"Seçili: {path.name} • {kind_text} • sürüm {version} • SHA {str(meta['sha256'])[:12]}…")
+         self._set_operation_status("firmware", "✓ Firmware dosyası doğrulandı ve yüklemeye hazır.", "success")
+         self.log_text.insert("end", f"\n[FIRMWARE] Seçildi: {path}\n[FIRMWARE] {kind_text}, sürüm={version}, sha256={meta['sha256']}\n")
+-        self.log_text.see("end")
++        self._scroll_log_if_enabled()
+ 
+     def use_embedded_firmware(self):
+         try:
+@@ -2174,7 +2228,7 @@
+             self._set_global_status("QR etiketi oluşturuldu", "success")
+             self._set_operation_status("identity", "✓ QR / etiket oluşturuldu.", "success")
+             self.log_text.insert("end", f"\n[QR] {path}\n[QR] {payload}\n")
+-            self.log_text.see("end")
++            self._scroll_log_if_enabled()
+             if ImageTk is not None:
+                 image = Image.open(path)
+                 image.thumbnail((720, 340))
+@@ -2502,7 +2556,7 @@
+         detail = "".join(traceback.format_exception(exc, val, tb))
+         try:
+             self.log_text.insert("end", f"\n[GUI ERROR] {detail}\n")
+-            self.log_text.see("end")
++            self._scroll_log_if_enabled()
+         except Exception:
+             pass
+         messagebox.showerror(APP_NAME, f"Beklenmeyen uygulama hatası:\n{val}")
