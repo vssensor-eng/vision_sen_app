@@ -70,10 +70,37 @@ jobs:
               if "'VS1'" not in line and 'legacy_default' not in line
           ]
           p.write_text('\n'.join(lines) + '\n', encoding='utf-8')
+
+          p = Path('tool/bootstrap_android.sh')
+          b = p.read_text(encoding='utf-8')
+          marker = '# VisionSen Kotlin 2.1 production build patch'
+          if marker not in b:
+              b += r'''
+
+          # VisionSen Kotlin 2.1 production build patch
+          python3 - <<'PYKOTLIN'
+          from pathlib import Path
+          import re
+          p = Path('android/settings.gradle')
+          s = p.read_text(encoding='utf-8')
+          s2, count = re.subn(
+              r'(id\s+["\']org\.jetbrains\.kotlin\.android["\']\s+version\s+["\'])[^"\']+(["\']\s+apply\s+false)',
+              r'\g<1>2.1.0\g<2>',
+              s,
+              count=1,
+          )
+          if count != 1:
+              raise SystemExit('Kotlin Gradle plugin target missing in android/settings.gradle')
+          p.write_text(s2, encoding='utf-8')
+          print('Android Kotlin Gradle plugin set to 2.1.0')
+          PYKOTLIN
+          '''
+              p.write_text(b, encoding='utf-8')
           PY
           grep -F 'version: 1.7.0+34' pubspec.yaml
           python3 -m py_compile tool/validate_strict.py
           python3 tool/validate_strict.py
+          grep -F 'VisionSen Kotlin 2.1 production build patch' tool/bootstrap_android.sh
           rm -rf tool/__pycache__
           ! grep -R "VS1\|formatV1\|legacy_default\|protocol_version.*3" -n lib test tool README.md
           echo "Mobile finalized source: PASS ($MOBILE_ROOT)"
@@ -97,6 +124,7 @@ jobs:
           set -euo pipefail
           cd "$MOBILE_ROOT"
           bash tool/bootstrap_android.sh
+          grep -F 'org.jetbrains.kotlin.android' android/settings.gradle
           cat android-gradle.properties >> android/gradle.properties
           echo 'dev.steenbakker.mobile_scanner.useUnbundled=true' >> android/gradle.properties
 
