@@ -34,6 +34,7 @@ jobs:
         shell: pwsh
         run: |
           $ErrorActionPreference='Stop'
+          $env:PYTHONUTF8='1'
           New-Item -ItemType Directory -Force factory_pc_tool_v065 | Out-Null
           Expand-Archive factory064-artifact/VisionSen-Factory-PC-Tool-v0.6.4-Production-Final-source.zip -DestinationPath factory_pc_tool_v065 -Force
           @'
@@ -71,6 +72,7 @@ jobs:
         shell: pwsh
         run: |
           $ErrorActionPreference='Stop'
+          $env:PYTHONUTF8='1'
           @'
           import hashlib,json
           from pathlib import Path
@@ -113,6 +115,7 @@ jobs:
         shell: pwsh
         run: |
           $ErrorActionPreference='Stop'
+          $env:PYTHONUTF8='1'
           Remove-Item -Recurse -Force factory_pc_tool_v065/__pycache__,factory_pc_tool_v065/tools/__pycache__ -ErrorAction SilentlyContinue
           Get-ChildItem factory_pc_tool_v065 -Recurse -Filter *.pyc | Remove-Item -Force
           Compress-Archive -Path factory_pc_tool_v065/* -DestinationPath VisionSen-Factory-PC-Tool-v0.6.5-Production-Final-source.zip -Force
