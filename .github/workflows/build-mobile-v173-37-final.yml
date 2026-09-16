@@ -1,0 +1,186 @@
+name: Build VisionSen Mobile v1.7.3+37 Final
+
+on:
+  push:
+    branches:
+      - mobile-v1.7.3-37-final
+    paths:
+      - '.github/workflows/build-mobile-v173-37-final.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  build-android:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Download verified v1.7.2+36 source artifact
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf /tmp/mobile172 mobile173
+          mkdir -p /tmp/mobile172 mobile173
+          gh run download 35119837642 --repo "$GITHUB_REPOSITORY" -n 'VisionSen-Mobile-v1.7.2+36-Final' -D /tmp/mobile172
+          tar -xzf '/tmp/mobile172/VisionSen-Mobile-v1.7.2+36-Final-source.tar.gz' -C mobile173
+          echo "MOBILE_ROOT=$PWD/mobile173" >> "$GITHUB_ENV"
+          python3 mobile173/tool/validate_strict.py
+
+      - name: Apply Android CHANGE_NETWORK_STATE and version-display fix
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd "$MOBILE_ROOT"
+          python3 - <<'PY'
+          from pathlib import Path
+
+          def replace(path, old, new, count=1):
+              p=Path(path); s=p.read_text(encoding='utf-8')
+              if old not in s:
+                  raise SystemExit(f'target missing: {path}: {old[:80]!r}')
+              s=s.replace(old,new,count)
+              p.write_text(s,encoding='utf-8')
+
+          replace('pubspec.yaml','version: 1.7.2+36','version: 1.7.3+37')
+          replace('README.md','# VisionSen Mobil 1.7.2+36','# VisionSen Mobil 1.7.3+37')
+          replace(
+              'lib/models/device.dart',
+              "  static const String systemContract = 'VS-OIM3-STRICT-1';\n",
+              "  static const String systemContract = 'VS-OIM3-STRICT-1';\n  static const String mobileVersion = '1.7.3+37';\n",
+          )
+          replace(
+              'lib/screens/wifi_provision_screen.dart',
+              "              const Text(\n                'Mobil v1.7.0+34 • VS2 • protocol 4 • zorunlu Device Manifest',\n                textAlign: TextAlign.center,\n                style: TextStyle(color: AppTheme.muted, fontSize: 10.5),\n              ),",
+              "              Text(\n                'Mobil v${VisionSenContract.mobileVersion} • VS2 • protocol 4 • zorunlu Device Manifest',\n                textAlign: TextAlign.center,\n                style: const TextStyle(color: AppTheme.muted, fontSize: 10.5),\n              ),",
+          )
+          replace(
+              'tool/bootstrap_android.sh',
+              "    'android.permission.ACCESS_NETWORK_STATE',\n",
+              "    'android.permission.ACCESS_NETWORK_STATE',\n    'android.permission.CHANGE_NETWORK_STATE',\n",
+          )
+          replace(
+              'tool/bootstrap_android.sh',
+              '    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />\n',
+              '    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />\n    <uses-permission android:name="android.permission.CHANGE_NETWORK_STATE" />\n',
+          )
+          replace(
+              'tool/validate_strict.py',
+              "'version':'version: 1.7.2+36' in t('pubspec.yaml'),",
+              "'version':'version: 1.7.3+37' in t('pubspec.yaml'),",
+          )
+          replace(
+              'tool/validate_strict.py',
+              " 'android13_provisioning_gate':",
+              " 'mobile_version_footer':\"static const String mobileVersion = '1.7.3+37';\" in model and 'VisionSenContract.mobileVersion' in wifi and 'Mobil v1.7.0+34' not in wifi,\n 'android13_provisioning_gate':",
+          )
+          replace(
+              'tool/validate_strict.py',
+              "    'native_disconnect_bridge':",
+              "    'change_network_state_permission': 'android.permission.CHANGE_NETWORK_STATE' in bootstrap,\n    'native_disconnect_bridge':",
+          )
+          PY
+          rm -rf tool/__pycache__
+          python3 tool/validate_strict.py
+          grep -F 'version: 1.7.3+37' pubspec.yaml
+          ! grep -R -F 'Mobil v1.7.0+34' lib
+
+      - name: Set up Java
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.24.0'
+          channel: stable
+          cache: false
+
+      - name: Prepare Android platform and verify permissions
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd "$MOBILE_ROOT"
+          bash tool/bootstrap_android.sh
+          cat android-gradle.properties >> android/gradle.properties
+          echo 'dev.steenbakker.mobile_scanner.useUnbundled=true' >> android/gradle.properties
+          MAIN='android/app/src/main/kotlin/com/visionsen/visionsen_setup/MainActivity.kt'
+          MANIFEST='android/app/src/main/AndroidManifest.xml'
+          test -f "$MAIN"
+          grep -F 'android.permission.CHANGE_NETWORK_STATE' "$MANIFEST"
+          grep -F 'android.permission.NEARBY_WIFI_DEVICES' "$MANIFEST"
+          grep -F 'bindProcessToNetwork(network)' "$MAIN"
+          grep -F 'cleanupCallback(this)' "$MAIN"
+          ! grep -F 'scanProvisioningWifi' "$MAIN"
+
+      - name: Resolve packages
+        shell: bash
+        run: |
+          cd "$MOBILE_ROOT"
+          flutter pub get
+
+      - name: Analyze
+        shell: bash
+        run: |
+          cd "$MOBILE_ROOT"
+          flutter analyze --no-fatal-infos
+
+      - name: Test
+        shell: bash
+        run: |
+          cd "$MOBILE_ROOT"
+          flutter test
+
+      - name: Build release APK
+        shell: bash
+        run: |
+          cd "$MOBILE_ROOT"
+          flutter build apk --release
+
+      - name: Verify APK contains required network permission and native bridge
+        shell: bash
+        run: |
+          set -euo pipefail
+          APK="$MOBILE_ROOT/build/app/outputs/flutter-apk/app-release.apk"
+          unzip -p "$APK" classes.dex > /tmp/classes.dex
+          unzip -p "$APK" AndroidManifest.xml > /tmp/AndroidManifest.binxml
+          grep -aF 'connectProvisioningWifi' /tmp/classes.dex
+          grep -aF 'getProvisioningCapabilities' /tmp/classes.dex
+          grep -aF 'CHANGE_NETWORK_STATE' /tmp/AndroidManifest.binxml
+          grep -aF 'NEARBY_WIFI_DEVICES' /tmp/AndroidManifest.binxml
+          if grep -aF 'scanProvisioningWifi' /tmp/classes.dex; then
+            echo 'Dead scanProvisioningWifi bridge found in APK'; exit 1
+          fi
+
+      - name: Package final APK source and hashes
+        shell: bash
+        run: |
+          set -euo pipefail
+          cp "$MOBILE_ROOT/build/app/outputs/flutter-apk/app-release.apk" VisionSen-Mobile-v1.7.3+37-Final.apk
+          rm -rf "$MOBILE_ROOT/tool/__pycache__"
+          find "$MOBILE_ROOT" -name '*.pyc' -delete
+          tar -czf VisionSen-Mobile-v1.7.3+37-Final-source.tar.gz -C "$MOBILE_ROOT" README.md analysis_options.yaml android-gradle.properties lib pubspec.yaml test tool
+          rm -rf /tmp/mobile173-check && mkdir /tmp/mobile173-check
+          tar -xzf VisionSen-Mobile-v1.7.3+37-Final-source.tar.gz -C /tmp/mobile173-check
+          python3 /tmp/mobile173-check/tool/validate_strict.py
+          sha256sum VisionSen-Mobile-v1.7.3+37-Final.apk VisionSen-Mobile-v1.7.3+37-Final-source.tar.gz > MOBILE-V173-SHA256SUMS.txt
+          cat MOBILE-V173-SHA256SUMS.txt
+
+      - name: Upload APK and source
+        uses: actions/upload-artifact@v4
+        with:
+          name: VisionSen-Mobile-v1.7.3+37-Final
+          path: |
+            VisionSen-Mobile-v1.7.3+37-Final.apk
+            VisionSen-Mobile-v1.7.3+37-Final-source.tar.gz
+            MOBILE-V173-SHA256SUMS.txt
+          if-no-files-found: error
+          retention-days: 30
