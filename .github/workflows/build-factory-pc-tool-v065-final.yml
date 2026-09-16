@@ -38,19 +38,15 @@ jobs:
           Expand-Archive factory064-artifact/VisionSen-Factory-PC-Tool-v0.6.4-Production-Final-source.zip -DestinationPath factory_pc_tool_v065 -Force
           @'
           from pathlib import Path
-          for rel in ('visionsen_factory_tool.py','tools/validate_production.py'):
-              p=Path('factory_pc_tool_v065')/rel
-              text=p.read_text(encoding='utf-8')
-              with p.open('w',encoding='utf-8',newline='\n') as f:
-                  f.write(text)
-          patch=Path('factory-v065/factory065.patch')
-          text=patch.read_text(encoding='utf-8')
-          with patch.open('w',encoding='utf-8',newline='\n') as f:
+          p=Path('factory_pc_tool_v065/visionsen_factory_tool.py')
+          text=p.read_text(encoding='utf-8')
+          with p.open('w',encoding='utf-8',newline='\n') as f:
               f.write(text)
           '@ | Set-Content normalize065.py -Encoding UTF8
           python normalize065.py
-          git apply --whitespace=nowarn --directory=factory_pc_tool_v065 factory-v065/factory065.patch
-          if ($LASTEXITCODE -ne 0) { throw 'Factory 0.6.5 patch apply failed' }
+          python factory-v065/patch_factory065_ui.py
+          python factory-v065/patch_factory065_sensor_catalog.py
+          Copy-Item factory-v065/validate_production.py factory_pc_tool_v065/tools/validate_production.py -Force
           Get-ChildItem factory_pc_tool_v065 -Filter 'RELEASE_NOTES-v0.6.*.md' | Remove-Item -Force
           Copy-Item factory-v065/RELEASE_NOTES-v0.6.5.md factory_pc_tool_v065/RELEASE_NOTES-v0.6.5.md
           Remove-Item -Recurse -Force factory_pc_tool_v065/__pycache__,factory_pc_tool_v065/tools/__pycache__ -ErrorAction SilentlyContinue
