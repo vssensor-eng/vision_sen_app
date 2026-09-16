@@ -38,8 +38,8 @@ jobs:
           Expand-Archive factory063-artifact/VisionSen-Factory-PC-Tool-v0.6.3-Production-Final-source.zip -DestinationPath factory_pc_tool_v064 -Force
           @'
           from pathlib import Path
-          for rel in ('visionsen_factory_tool.py','tools/validate_production.py'):
-              p=Path('factory_pc_tool_v064')/rel
+          for rel in ('factory_pc_tool_v064/visionsen_factory_tool.py','factory_pc_tool_v064/tools/validate_production.py','factory-v064/factory064.patch'):
+              p=Path(rel)
               text=p.read_text(encoding='utf-8')
               with p.open('w',encoding='utf-8',newline='\n') as f:
                   f.write(text)
