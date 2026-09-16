@@ -39,7 +39,7 @@ jobs:
           New-Item -ItemType Directory -Force factory_pc_tool_v062 | Out-Null
           tar -xzf factory-v061.tar.gz -C factory_pc_tool_v062
           Push-Location factory_pc_tool_v062
-          patch --batch --forward -p1 < ../factory-build/v0.6.1/v061-to-v062.patch
+          cmd /c "patch --batch --forward -p1 < ..\factory-build\v0.6.1\v061-to-v062.patch"
           if ($LASTEXITCODE -ne 0) { throw "v0.6.2 patch failed: $LASTEXITCODE" }
           Pop-Location
           python -m py_compile factory_pc_tool_v062/visionsen_factory_tool.py factory_pc_tool_v062/tools/validate_production.py
@@ -140,14 +140,12 @@ jobs:
 
           with tempfile.TemporaryDirectory() as td:
               td=Path(td)
-              # Approved ZIP must pass.
               approved=td/'approved.zip'
               with zipfile.ZipFile(approved,'w',zipfile.ZIP_DEFLATED) as z:
                   for name in ('bootloader.bin','partition-table.bin','ota_data_initial.bin','visionsen_oim3.bin','flasher_args.json','visionsen_firmware_manifest.json'):
                       z.write(fw/name,arcname=name)
               app._inspect_firmware_zip(approved)
 
-              # Build an internally self-consistent but non-approved same-version ZIP.
               stale_dir=td/'stale'; stale_dir.mkdir()
               for name in ('bootloader.bin','partition-table.bin','ota_data_initial.bin','visionsen_oim3.bin','flasher_args.json','visionsen_firmware_manifest.json'):
                   (stale_dir/name).write_bytes((fw/name).read_bytes())
@@ -165,7 +163,6 @@ jobs:
               else:
                   raise SystemExit('same-version stale ZIP was accepted')
 
-              # Same-version stale app BIN must also fail exact approved SHA gate.
               stale_app=td/'stale-app.bin'
               b=bytearray((fw/'visionsen_oim3.bin').read_bytes()); b[-1] ^= 1; stale_app.write_bytes(b)
               try:
