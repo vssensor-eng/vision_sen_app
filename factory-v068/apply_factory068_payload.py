@@ -16,6 +16,7 @@ names = [
     "chunk02b.txt",
     "chunk02c.txt",
     "chunk02d.txt",
+    "chunk02e.txt",
     "chunk03.txt",
     "chunk04.txt",
     "chunk05.txt",
