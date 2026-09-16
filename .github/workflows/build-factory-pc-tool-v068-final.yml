@@ -1,0 +1,125 @@
+name: Build VisionSen Factory PC Tool v0.6.8 Production Final
+
+on:
+  push:
+    branches: [factory-pc-tool-v0.6.8]
+    paths:
+      - '.github/workflows/build-factory-pc-tool-v068-final.yml'
+      - 'factory-v068/**'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+    timeout-minutes: 45
+    env:
+      PYTHONUTF8: '1'
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.13'
+
+      - name: Download verified Factory 0.6.7 source
+        uses: actions/download-artifact@v4
+        with:
+          name: VisionSen-Factory-PC-Tool-v0.6.7-Production-Final-Windows-R2
+          path: factory067-artifact
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          run-id: 35149621477
+
+      - name: Prepare Factory 0.6.8 source
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          New-Item -ItemType Directory -Force factory_pc_tool_v068 | Out-Null
+          Expand-Archive factory067-artifact/VisionSen-Factory-PC-Tool-v0.6.7-Production-Final-source.zip -DestinationPath factory_pc_tool_v068 -Force
+          python factory-v068/apply_factory068_payload.py
+          Copy-Item factory-v068/validate_production.py factory_pc_tool_v068/tools/validate_production.py -Force
+          Get-ChildItem factory_pc_tool_v068 -Filter 'RELEASE_NOTES-v0.6.*.md' | Remove-Item -Force
+          Copy-Item factory-v068/RELEASE_NOTES-v0.6.8.md factory_pc_tool_v068/RELEASE_NOTES-v0.6.8.md -Force
+          Remove-Item -Recurse -Force factory_pc_tool_v068/__pycache__,factory_pc_tool_v068/tools/__pycache__ -ErrorAction SilentlyContinue
+          Get-ChildItem factory_pc_tool_v068 -Recurse -Filter *.pyc | Remove-Item -Force
+          Push-Location factory_pc_tool_v068
+          python tools/validate_production.py
+          Pop-Location
+
+      - name: Cross-check embedded approved OIM3 2.2.1 firmware
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          @'
+          import hashlib,json
+          from pathlib import Path
+          r=Path('factory_pc_tool_v068/firmware')
+          expected={
+            'bootloader.bin':'dccb8e97a7c10b29425e5322bbeb61871492f9736ba8c1e9a709d3ae974a4fd9',
+            'partition-table.bin':'4e4f13ef32d3f53b8c66d046047112160a8494205577d1622cabe70b7ce40519',
+            'ota_data_initial.bin':'7d2c7ac4888bfd75cd5f56e8d61f69595121183afc81556c876732fd3782c62f',
+            'visionsen_oim3.bin':'6e0fd387e0ef7d8542bf39c5af22c37bab882a4456c236dfe0d00ee3daec4b78'}
+          for n,w in expected.items():
+              g=hashlib.sha256((r/n).read_bytes()).hexdigest()
+              assert g==w,(n,g,w)
+          m=json.loads((r/'visionsen_firmware_manifest.json').read_text(encoding='utf-8'))
+          assert m['firmware_version']=='2.2.1'
+          assert m['sha256']==expected
+          print('Factory 0.6.8 embedded firmware exact SHA: PASS')
+          '@ | Set-Content verifyfw.py -Encoding UTF8
+          python verifyfw.py
+
+      - name: Install dependencies
+        shell: pwsh
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r factory_pc_tool_v068/requirements.txt
+          python -m pip install pyinstaller
+
+      - name: Build standalone EXE
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          python -m PyInstaller --noconfirm --clean --onefile --windowed `
+            --name VisionSen-Factory-PC-Tool-v0.6.8-Production-Final `
+            --add-data "factory_pc_tool_v068/firmware;firmware" `
+            --add-data "factory_pc_tool_v068/protocol;protocol" `
+            --collect-all esptool --collect-all esp_idf_nvs_partition_gen --collect-all esp_pylib --collect-all rich_click `
+            factory_pc_tool_v068/visionsen_factory_tool.py
+          if ($LASTEXITCODE -ne 0) { throw 'PyInstaller failed' }
+
+      - name: Package clean source and verify
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          Remove-Item -Recurse -Force factory_pc_tool_v068/__pycache__,factory_pc_tool_v068/tools/__pycache__ -ErrorAction SilentlyContinue
+          Get-ChildItem factory_pc_tool_v068 -Recurse -Filter *.pyc | Remove-Item -Force
+          Compress-Archive -Path factory_pc_tool_v068/* -DestinationPath VisionSen-Factory-PC-Tool-v0.6.8-Production-Final-source.zip -Force
+          New-Item -ItemType Directory -Force source-check | Out-Null
+          Expand-Archive VisionSen-Factory-PC-Tool-v0.6.8-Production-Final-source.zip -DestinationPath source-check -Force
+          if (Get-ChildItem source-check -Recurse -Directory -Filter __pycache__) { throw '__pycache__ found in source package' }
+          if (Get-ChildItem source-check -Recurse -Filter *.pyc) { throw '*.pyc found in source package' }
+          Push-Location source-check
+          python tools/validate_production.py
+          Pop-Location
+          $exe='dist/VisionSen-Factory-PC-Tool-v0.6.8-Production-Final.exe'
+          $src='VisionSen-Factory-PC-Tool-v0.6.8-Production-Final-source.zip'
+          $eh=(Get-FileHash $exe -Algorithm SHA256).Hash.ToLower()
+          $sh=(Get-FileHash $src -Algorithm SHA256).Hash.ToLower()
+          "$eh  VisionSen-Factory-PC-Tool-v0.6.8-Production-Final.exe" | Set-Content FACTORY-V068-SHA256SUMS.txt -Encoding ascii
+          "$sh  VisionSen-Factory-PC-Tool-v0.6.8-Production-Final-source.zip" | Add-Content FACTORY-V068-SHA256SUMS.txt -Encoding ascii
+          Get-Content FACTORY-V068-SHA256SUMS.txt
+
+      - name: Upload final Windows package
+        uses: actions/upload-artifact@v4
+        with:
+          name: VisionSen-Factory-PC-Tool-v0.6.8-Production-Final-Windows
+          path: |
+            dist/VisionSen-Factory-PC-Tool-v0.6.8-Production-Final.exe
+            VisionSen-Factory-PC-Tool-v0.6.8-Production-Final-source.zip
+            FACTORY-V068-SHA256SUMS.txt
+          if-no-files-found: error
+          retention-days: 30
