@@ -1,69 +1,45 @@
-# VISION­SEN Device Setup — Flutter Frontend
+# VisionSen Mobil — v1.6.1
 
-Koyu VISION­SEN tasarımı, form ekranları, doğrulama, özet, güvenli ayar gönderimi ve tamamlandı akışının yanı sıra
-`lib/services/ble_service.dart` içinde **gerçek** BLE kurulum istemcisi bulunur. Bu, `VS-ESP-BLE`
-ESP32 firmware'inin (v1.2.6+) BLE kurulum modülüyle (BLE_SERVICE_UUID / BLE_CONFIG_CHAR_UUID /
-BLE_STATUS_CHAR_UUID / BLE_INFO_CHAR_UUID) birebir eşleşecek şekilde yazılmıştır.
+VisionSen Mobil, **Ortam İzleme 2.5.81 + Mobil API** ile çalışır. ESP32 OIM3 cihaz yapılandırması yalnız login sonrasında **Yapılandır** sekmesinden ve cihazın geçici yerel Wi-Fi ağı üzerinden yapılır.
 
-## Firmware ile eşleşme
-- Cihaz gerçek enerji verilişinden sonra **60 saniye** `VISIONSEN-ESP-XXXX` adıyla BLE yayını yapar. Normal deep-sleep/timer ölçüm uyanışlarında BLE açılmaz. Yapılandırılmamış cihaz, kurulum tamamlanana kadar 60 saniyelik pencereleri yeniden açar. Tarama paketindeki durum biti gerçek `configured` bilgisini gösterir.
-- INFO ve CONFIG erişimi BLE bonding + şifreli GATT üzerinden yapılır. Ayarlar CONFIG karakteristiğine parça parça (chunk) JSON olarak yazılır; cihaz STATUS karakteristiğinden `SAVED` veya `ERROR:<KOD>` bildirimi döner.
-- Daha önce kurulmuş cihazın 60 saniyelik güç-açılış penceresinde ayar değişikliği yalnızca cihazda kayıtlı **mevcut firma anahtarı** eşleşirse kabul edilir. Fiziksel düğme kullanılmaz. Firma anahtarı **6-128 karakter** olmalıdır. Kurulu cihazda mevcut anahtar yetkilendirme için girilir; "Firma anahtarını değiştir" seçeneği kapalıysa aynı anahtar korunur, açıkken ayrıca yeni anahtar istenir.
-- INFO karakteristiği `{"device_type","protocol_version","serial","fw","mac","configured"}` alanlarını içeren bir JSON döner.
-- Uygulama uyumluluğu **firmware sürümüne göre değil**, `device_type + protocol_version` ikilisine göre belirler. `fw` yalnızca ekranda bilgi amaçlı gösterilir. Desteklenmeyen protokol veya cihaz tipi yapılandırılmaz.
-- **Geriye dönük uyumluluk yoktur.** `device_type` veya `protocol_version` alanlarından biri eksikse uygulama kurulumu durdurur. Bu nedenle v1.2.2 ve önceki kimlik şemasına sahip firmware sürümleri desteklenmez.
-- Sunucu adresi hem `http://` hem `https://` olabilir; şema firmware tarafında adresin
-  önekinden çalışma anında belirlenir.
+## v1.6.1 — Uygulama içi Wi-Fi provisioning
+- ESP32 yapılandırma taşıması BLE/NimBLE yerine **Wi-Fi SoftAP Provisioning Protocol v2** kullanır.
+- Cihaz kurulum sırasında `VISIONSEN-OIM3-XXXX` isimli WPA2 ağı açar; mobil uygulama cihazı `http://192.168.4.1` adresindeki yerel API üzerinden yapılandırır.
+- Mobil uygulamada Bluetooth tarama, bonding, GATT ve MTU/chunk yönetimi yoktur.
+- Android 10+ cihazlarda `WifiNetworkSpecifier` ile VisionSen ağı uygulamadan çıkmadan seçilir; sistem Wi-Fi Ayarları ekranı açılmaz.
+- Android 13+ için `NEARBY_WIFI_DEVICES`, Android 10-12 için yalnız provisioning sırasında `ACCESS_FINE_LOCATION` çalışma zamanı izni kullanılır.
+- Uygulama process’i ESP ağına global olarak bind edilmez. Yalnız `192.168.4.1` yerel provisioning istekleri Android `Network.openConnection()` üzerinden cihaz ağına yönlendirilir; VSİAS cloud/login trafiği normal internet bağlantısında kalır.
+- Kurulum alanları: hedef SSID/şifre, cihaz adı, seri numarası, HTTPS sunucu URL, firma anahtarı ve 1/5/15 dakika gönderim aralığı.
+- Daha önce yapılandırılmış cihazlarda mevcut firma anahtarı yeniden doğrulanır; firma anahtarı isteğe bağlı değiştirilebilir.
+- Mobil sürüm: **1.6.1+19**. Uyumlu OIM3 firmware: **v2.1.3 / Provisioning Protocol v2**.
 
-## Akış
-1. Ana ekran
-2. BLE cihaz tarama
-3. Cihaz seçme
-4. Cihaz doğrulama
-5. Wi-Fi bilgileri
-6. Cihaz bilgileri
-7. Sunucu bilgileri
-8. Ayar özeti
-9. Ayarların cihaza gönderilmesi ve `SAVED` yanıtının beklenmesi
-10. Tamamlandı (Wi-Fi/sunucu erişimi yönetim panelinden doğrulanır)
+## Alt navigasyon
+- Ana — sistem sağlığı, bina/oda/cihaz/sensör/alarm sayıları, son alarmlar, çevrimdışı cihazlar ve hızlı erişim
+- Detay — bina/kat/oda/dolap seçimi, canlı sensör kartları, grafikler, alarmlar ve cihazlar
+- Binalar — bina/kat/oda/dolap ekleme, düzenleme ve silme
+- Cihazlar — cihaz ekleme, düzenleme, silme ve sensör yönetimi
+- Yapılandır — OIM3 Wi-Fi SoftAP provisioning
+- Profil — hesap/firma bilgileri ve çıkış
 
-## Çalıştırma
+## OIM3 Wi-Fi kurulum akışı
+1. ESP32 cihazı kapatıp açın.
+2. Uygulamadaki **Cihaza Bağlan** düğmesine dokunun.
+3. Android sistem bağlantı penceresinde `VISIONSEN-OIM3-XXXX` ağını seçip onaylayın. Uygulama Wi-Fi Ayarları ekranına geçmez.
+4. Uygulama `/api/info` isteğini yalnız seçilen local-only network üzerinden gönderir ve cihaz bilgilerini doğrular.
+5. Yapılandırma alanlarını doldurup cihaza kaydedin. `/api/config` isteği de yalnız cihaz network’ü üzerinden gider.
+6. `SAVED` alındığında ESP bağlantısı otomatik bırakılır; cihaz yeniden başlar ve normal Wi-Fi/telemetri moduna geçer.
+7. Provisioning aktifken geri tuşuna basılırsa ilk geri basışı uygulamayı kapatmaz; önce cihaz bağlantısını sonlandırır. Yapılandır sekmesinden başka sekmeye geçildiğinde de bağlantı otomatik bırakılır.
 
-```bash
-flutter pub get
-flutter run
-```
+## Yönetim
+Firma yöneticisi mobil uygulamadan bina, kat, oda, dolap, cihaz ve sensör oluşturabilir/düzenleyebilir/silebilir. Sensörler veri modelinde **cihaza bağlıdır**; cihaz oda veya dolaba atanır. İzleme personeli salt okunur erişim kullanır.
 
-BLE için Android'de konum/Bluetooth çalışma-anı izinleri istenir (`permission_handler`).
-Cihaz bulunamıyorsa enerji verildikten sonraki 60 saniyelik BLE penceresinin açık olduğundan
-ve telefonun cihazın yakınında olduğundan emin olun.
+## Grafik
+Sensöre dokunulduğunda 1 saat, 6 saat, 24 saat, 7 gün, 30 gün ve 90 gün aralıkları açılır. Grafik X ekseninde zamanı, Y ekseninde sensör birimini gösterir. Güncel, minimum ve maksimum ayrı gösterilir.
 
-## CI / Android release signing
+## Web API
+`https://www.vsias.com/wp-json/oim/v1/mobile/*`
 
-Workflow `flutter analyze` ve `flutter test` çalıştırır. Doğrudan bağımlılık sürümleri
-`pubspec.yaml` içinde sabitlenmiştir. Kalıcı production imzası için GitHub repository
-secrets altında şu dört değer tanımlanmalıdır:
+Mobil CRUD uçları yalnız HTTPS + geçerli Bearer token + manager rolünde çalışır. OIM3 provisioning API ise yalnız cihazın geçici yerel SoftAP ağı içindeki `192.168.4.1` adresinde HTTP kullanır; bulut/sunucu URL doğrulaması HTTPS zorunludur.
 
-- `ANDROID_KEYSTORE_BASE64`
-- `ANDROID_KEY_ALIAS`
-- `ANDROID_STORE_PASSWORD`
-- `ANDROID_KEY_PASSWORD`
-
-Bu secrets yoksa workflow yalnızca CI amaçlı APK üretir; onu production güncelleme
-imzası olarak kullanmayın. Secrets varsa aynı anahtarla imzalanmış APK ve AAB üretilir.
-
-## Yerel Android derleme
-
-Kaynak paket `android/` klasörünü taşımak yerine Flutter 3.24.0 ile aynı platform
-iskeletini üretir. İlk yerel derlemede proje kökünde:
-
-```bash
-bash tool/bootstrap_android.sh
-flutter pub get
-flutter analyze
-flutter test
-flutter build apk --release
-```
-
-Doğrudan bağımlılıklar `pubspec.yaml` içinde tam sürüme sabitlenmiştir. CI da aynı
-Flutter 3.24.0 sürümünü kullanır.
+## Android build
+Kaynak pakette Android platformunu üretmek ve local-only provisioning köprüsünü kurmak için `bash tool/bootstrap_android_localonly.sh` çalıştırın. Bu script önce standart Android bootstrap'ını oluşturur, ardından `WifiNetworkSpecifier` ve cihaz ağına özel `Network.openConnection()` köprüsünü uygular.
