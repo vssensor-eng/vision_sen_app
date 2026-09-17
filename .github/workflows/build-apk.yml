@@ -3,6 +3,8 @@ name: Build Android
 on:
   push:
     branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
   workflow_dispatch: {}
 
 jobs:
@@ -26,7 +28,7 @@ jobs:
           cache: true
 
       - name: Prepare Android platform
-        run: bash tool/bootstrap_android.sh
+        run: bash tool/bootstrap_android_v166.sh
 
       - name: Install dependencies
         run: flutter pub get

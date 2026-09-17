@@ -1,0 +1,220 @@
+                ),
+              ),
+              TextButton.icon(
+                onPressed: _busy ? null : _scanDevices,
+                icon: const Icon(Icons.refresh, size: 18),
+                label: const Text('Yenile'),
+              ),
+            ],
+          ),
+          const SizedBox(height: 6),
+          ..._foundDevices.map(
+            (device) => Container(
+              margin: const EdgeInsets.only(top: 8),
+              decoration: BoxDecoration(
+                color: AppTheme.panel2,
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(color: AppTheme.line),
+              ),
+              child: ListTile(
+                leading: Icon(
+                  _signalIcon(device.signalBars),
+                  color: AppTheme.cyan,
+                ),
+                title: Text(
+                  device.ssid,
+                  style: const TextStyle(fontWeight: FontWeight.w800),
+                ),
+                subtitle: Text(
+                  '${device.rssi} dBm • Kurulum cihazı',
+                  style: const TextStyle(color: AppTheme.muted),
+                ),
+                trailing: _busy && _connectingSsid == device.ssid
+                    ? const SizedBox(
+                        width: 22,
+                        height: 22,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      )
+                    : const Icon(Icons.chevron_right),
+                onTap: _busy ? null : () => _connectDevice(device),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final info = _deviceInfo;
+    return Scaffold(
+      body: AppBackground(
+        child: SafeArea(
+          child: ListView(
+            padding: const EdgeInsets.fromLTRB(18, 12, 18, 30),
+            children: [
+              const SizedBox(height: 8),
+              const Center(
+                child: Icon(
+                  Icons.wifi_tethering,
+                  size: 62,
+                  color: AppTheme.cyan,
+                ),
+              ),
+              const SizedBox(height: 14),
+              const Text(
+                'VISIONSEN WI-FI YAPILANDIRMA',
+                textAlign: TextAlign.center,
+                style: TextStyle(
+                  fontSize: 20,
+                  fontWeight: FontWeight.w900,
+                  letterSpacing: 1.1,
+                ),
+              ),
+              const SizedBox(height: 6),
+              const Text(
+                'OIM3 v2.1.6 • Cihaza özel kurulum kodu + üretici seri kimliği',
+                textAlign: TextAlign.center,
+                style: TextStyle(color: AppTheme.green, fontSize: 11.5),
+              ),
+              const SizedBox(height: 18),
+              const Panel(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'Kurulum bağlantısı',
+                      style: TextStyle(fontWeight: FontWeight.w900),
+                    ),
+                    SizedBox(height: 10),
+                    Text('1. ESP32 cihazı kapatıp açın.'),
+                    SizedBox(height: 6),
+                    Text('2. CİHAZLARI BUL düğmesine dokunun.'),
+                    SizedBox(height: 6),
+                    Text(
+                      '3. Android cihaz seçim ekranında VISIONSEN-OIM3 cihazını seçin. Konum izni kullanılmaz.',
+                    ),
+                    SizedBox(height: 6),
+                    Text(
+                      '4. Android 13+ cihazlarda Yakındaki Wi-Fi cihazları izni istenebilir. Bu izin konum bilgisi için kullanılmaz.',
+                      style: TextStyle(color: AppTheme.muted),
+                    ),
+                    SizedBox(height: 6),
+                    Text(
+                      'Kurulum bitince veya uygulamadan ayrılınca cihaz bağlantısı otomatik kapatılır.',
+                      style: TextStyle(color: AppTheme.muted),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 12),
+              PrimaryButton(
+                text: _busy
+                    ? 'İŞLEM YAPILIYOR...'
+                    : _connected
+                        ? 'CİHAZ BAĞLANTISINI KES'
+                        : 'CİHAZLARI BUL',
+                icon: _connected ? Icons.link_off : Icons.wifi_find,
+                onPressed: _busy
+                    ? null
+                    : _connected
+                        ? () => _disconnect()
+                        : _scanDevices,
+              ),
+              if (_message != null) ...[
+                const SizedBox(height: 12),
+                Container(
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                    color: (_messageIsError ? Colors.redAccent : AppTheme.green)
+                        .withOpacity(.08),
+                    borderRadius: BorderRadius.circular(12),
+                    border: Border.all(
+                      color: (_messageIsError
+                              ? Colors.redAccent
+                              : AppTheme.green)
+                          .withOpacity(.28),
+                    ),
+                  ),
+                  child: Text(
+                    _message!,
+                    style: TextStyle(
+                      color: _messageIsError
+                          ? Colors.redAccent
+                          : AppTheme.green,
+                      fontSize: 12,
+                      height: 1.35,
+                    ),
+                  ),
+                ),
+              ],
+              if (_foundDevices.isNotEmpty && !_connected) ...[
+                const SizedBox(height: 14),
+                _deviceList(),
+              ],
+              if (_connected) ...[
+                const SizedBox(height: 10),
+                SecondaryButton(
+                  text: 'CİHAZI YENİDEN KONTROL ET',
+                  onPressed: _busy ? null : _readInfo,
+                ),
+              ],
+              if (_connected && info != null) ...[
+                const SizedBox(height: 14),
+                Panel(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const Text(
+                        'Bağlı cihaz',
+                        style: TextStyle(fontWeight: FontWeight.w900),
+                      ),
+                      const SizedBox(height: 8),
+                      Text(
+                        'Kurulum ağı: ${_provision.connectedSsid ?? WifiProvisionService.apNamePattern}',
+                      ),
+                      Text(
+                        'Telefon yerel IP: ${_provision.connectedLocalIp ?? '-'}',
+                      ),
+                      Text('Firmware: ${info['fw'] ?? '-'}'),
+                      Row(
+                        children: [
+                          const Icon(Icons.lock_outline, size: 15, color: AppTheme.green),
+                          const SizedBox(width: 6),
+                          Expanded(
+                            child: Text(
+                              'Üretici seri no: ${info['serial'] ?? '-'}',
+                              style: const TextStyle(fontWeight: FontWeight.w800),
+                            ),
+                          ),
+                        ],
+                      ),
+                      Text('HW-ID: ${info['hw_id'] ?? '-'}'),
+                      Text('MAC: ${info['mac'] ?? '-'}'),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 14),
+                Panel(
+                  child: Column(
+                    children: [
+                      TextField(
+                        controller: _ssid,
+                        decoration: _decoration(
+                          'Bağlanılacak Wi-Fi ağı (SSID)',
+                          Icons.wifi,
+                        ),
+                      ),
+                      const SizedBox(height: 12),
+                      TextField(
+                        controller: _password,
+                        obscureText: !_showWifiPassword,
+                        decoration: _decoration(
+                          'Wi-Fi şifresi',
+                          Icons.lock_outline,
+                          suffix: IconButton(
+                            onPressed: () => setState(
+                              () => _showWifiPassword = !_showWifiPassword,
+                            ),
+                            icon: Icon(

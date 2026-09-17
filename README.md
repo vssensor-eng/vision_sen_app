@@ -1,69 +1,56 @@
-# VISION­SEN Device Setup — Flutter Frontend
+# VisionSen Mobil — v1.6.6
 
-Koyu VISION­SEN tasarımı, form ekranları, doğrulama, özet, güvenli ayar gönderimi ve tamamlandı akışının yanı sıra
-`lib/services/ble_service.dart` içinde **gerçek** BLE kurulum istemcisi bulunur. Bu, `VS-ESP-BLE`
-ESP32 firmware'inin (v1.2.6+) BLE kurulum modülüyle (BLE_SERVICE_UUID / BLE_CONFIG_CHAR_UUID /
-BLE_STATUS_CHAR_UUID / BLE_INFO_CHAR_UUID) birebir eşleşecek şekilde yazılmıştır.
+VisionSen Mobil, **Ortam İzleme 2.5.81 + Mobil API** ile çalışır. ESP32 OIM3 cihaz yapılandırması yalnız login sonrasında **Yapılandır** sekmesinden ve cihazın geçici yerel Wi-Fi ağı üzerinden yapılır.
 
-## Firmware ile eşleşme
-- Cihaz gerçek enerji verilişinden sonra **60 saniye** `VISIONSEN-ESP-XXXX` adıyla BLE yayını yapar. Normal deep-sleep/timer ölçüm uyanışlarında BLE açılmaz. Yapılandırılmamış cihaz, kurulum tamamlanana kadar 60 saniyelik pencereleri yeniden açar. Tarama paketindeki durum biti gerçek `configured` bilgisini gösterir.
-- INFO ve CONFIG erişimi BLE bonding + şifreli GATT üzerinden yapılır. Ayarlar CONFIG karakteristiğine parça parça (chunk) JSON olarak yazılır; cihaz STATUS karakteristiğinden `SAVED` veya `ERROR:<KOD>` bildirimi döner.
-- Daha önce kurulmuş cihazın 60 saniyelik güç-açılış penceresinde ayar değişikliği yalnızca cihazda kayıtlı **mevcut firma anahtarı** eşleşirse kabul edilir. Fiziksel düğme kullanılmaz. Firma anahtarı **6-128 karakter** olmalıdır. Kurulu cihazda mevcut anahtar yetkilendirme için girilir; "Firma anahtarını değiştir" seçeneği kapalıysa aynı anahtar korunur, açıkken ayrıca yeni anahtar istenir.
-- INFO karakteristiği `{"device_type","protocol_version","serial","fw","mac","configured"}` alanlarını içeren bir JSON döner.
-- Uygulama uyumluluğu **firmware sürümüne göre değil**, `device_type + protocol_version` ikilisine göre belirler. `fw` yalnızca ekranda bilgi amaçlı gösterilir. Desteklenmeyen protokol veya cihaz tipi yapılandırılmaz.
-- **Geriye dönük uyumluluk yoktur.** `device_type` veya `protocol_version` alanlarından biri eksikse uygulama kurulumu durdurur. Bu nedenle v1.2.2 ve önceki kimlik şemasına sahip firmware sürümleri desteklenmez.
-- Sunucu adresi hem `http://` hem `https://` olabilir; şema firmware tarafında adresin
-  önekinden çalışma anında belirlenir.
+## v1.6.6 — üretici seri kimliği + konum izinsiz Wi-Fi provisioning
 
-## Akış
-1. Ana ekran
-2. BLE cihaz tarama
-3. Cihaz seçme
-4. Cihaz doğrulama
-5. Wi-Fi bilgileri
-6. Cihaz bilgileri
-7. Sunucu bilgileri
-8. Ayar özeti
-9. Ayarların cihaza gönderilmesi ve `SAVED` yanıtının beklenmesi
-10. Tamamlandı (Wi-Fi/sunucu erişimi yönetim panelinden doğrulanır)
+- Uyumlu ESP firmware: **OIM3 v2.1.4 / Provisioning Protocol v2**.
+- Ürün seri numarası müşteri ayarı değildir. Firmware seri kimliğini yalnız üreticiye ait `factory_data` bölümünden okur.
+- Kurulum SSID formatı: `VISIONSEN-OIM3-{SERIAL}`. Örnek: `VISIONSEN-OIM3-ESP-000001`.
+- Mobil uygulamada seri numarası giriş alanı yoktur; seri yalnız `/api/info` üzerinden salt-okunur gösterilir.
+- Uygulama yalnız `serial_locked=true` ve `identity_source=factory_data` bildiren cihazı kabul eder.
+- `/api/config` isteğinde `serial` gönderilmez.
+- Test aşamasındaki ürün için legacy seri/config migration yolu yoktur.
 
-## Çalıştırma
+## Android Wi-Fi bağlantısı
 
-```bash
-flutter pub get
-flutter run
-```
+- ESP32 yapılandırma taşıması BLE/NimBLE yerine **Wi-Fi SoftAP Provisioning Protocol v2** kullanır.
+- `ACCESS_FINE_LOCATION` ve `ACCESS_COARSE_LOCATION` kullanılmaz ve manifestte tanımlı değildir.
+- `WifiManager.startScan()` / `getScanResults()` kullanılmaz.
+- VisionSen cihaz seçimi Android `CompanionDeviceManager` + `WifiDeviceFilter` üzerinden yapılır.
+- Android 13+ için `NEARBY_WIFI_DEVICES` manifestte `neverForLocation` ile tanımlıdır.
+- `CHANGE_NETWORK_STATE`, `ACCESS_NETWORK_STATE`, `ACCESS_WIFI_STATE` ve `CHANGE_WIFI_STATE` bağlantı yönetimi için kullanılır; `WRITE_SETTINGS` kullanılmaz.
+- Seçilen cihaz `WifiNetworkSpecifier` ile local-only olarak bağlanır; bağlantı telefon `192.168.4.x` DHCP adresi aldıktan sonra başarılı sayılır.
+- `/api/info` ve `/api/config` yalnız cihazın seçilen Android `Network` nesnesi üzerinden `192.168.4.1` adresine gider; cloud/login trafiği normal internet bağlantısında kalır.
+- Uygulama arka plana geçtiğinde, sekmeden çıkıldığında, logout yapıldığında veya Activity kapandığında provisioning request ve companion association temizlenir.
 
-BLE için Android'de konum/Bluetooth çalışma-anı izinleri istenir (`permission_handler`).
-Cihaz bulunamıyorsa enerji verildikten sonraki 60 saniyelik BLE penceresinin açık olduğundan
-ve telefonun cihazın yakınında olduğundan emin olun.
+## Oturum
 
-## CI / Android release signing
+- Başarılı giriş tokenı `FlutterSecureStorage` içinde korunur.
+- Uygulama kapatılıp açıldığında geçerli token ile oturum geri yüklenir.
+- Geçici internet/DNS hatası tokenı silmez; token yalnız sunucu açıkça `401` döndürürse veya kullanıcı **Çıkış Yap** seçerse temizlenir.
+- Son başarılı kullanıcı adı hatırlanır; parola cihazda kalıcı olarak saklanmaz.
 
-Workflow `flutter analyze` ve `flutter test` çalıştırır. Doğrudan bağımlılık sürümleri
-`pubspec.yaml` içinde sabitlenmiştir. Kalıcı production imzası için GitHub repository
-secrets altında şu dört değer tanımlanmalıdır:
+## OIM3 Wi-Fi kurulum akışı
 
-- `ANDROID_KEYSTORE_BASE64`
-- `ANDROID_KEY_ALIAS`
-- `ANDROID_STORE_PASSWORD`
-- `ANDROID_KEY_PASSWORD`
+1. Üretici cihazın `factory_data` alanına seri numarasını yazar.
+2. ESP32 cihazı kapatıp açın.
+3. Uygulamadaki **Cihazları Bul** düğmesine dokunun.
+4. Android seçim ekranında `VISIONSEN-OIM3-ESP-...` cihazınızı seçin.
+5. Android 13+ gerekiyorsa yalnız **Yakındaki Wi-Fi cihazları** iznini gösterir.
+6. Telefon `192.168.4.x` adresi aldıktan sonra uygulama `/api/info` isteğini gönderir.
+7. Uygulama factory serial kimliğini doğrular ve seri numarasını yalnız gösterir.
+8. Wi-Fi, sunucu, cihaz adı, gönderim aralığı ve firma anahtarını kaydedin.
+9. `SAVED` alındığında ESP bağlantısı bırakılır; cihaz yeniden başlar ve normal Wi-Fi/telemetri moduna geçer.
 
-Bu secrets yoksa workflow yalnızca CI amaçlı APK üretir; onu production güncelleme
-imzası olarak kullanmayın. Secrets varsa aynı anahtarla imzalanmış APK ve AAB üretilir.
-
-## Yerel Android derleme
-
-Kaynak paket `android/` klasörünü taşımak yerine Flutter 3.24.0 ile aynı platform
-iskeletini üretir. İlk yerel derlemede proje kökünde:
+## Android build
 
 ```bash
-bash tool/bootstrap_android.sh
+bash tool/bootstrap_android_v166.sh
 flutter pub get
 flutter analyze
 flutter test
 flutter build apk --release
 ```
 
-Doğrudan bağımlılıklar `pubspec.yaml` içinde tam sürüme sabitlenmiştir. CI da aynı
-Flutter 3.24.0 sürümünü kullanır.
+Mobil sürüm: **1.6.6+24**.

@@ -1,0 +1,220 @@
+    await _readInfo();
+  }
+
+  Future<void> _readInfo() async {
+    if (!_connected) return;
+    setState(() => _busy = true);
+    final info = await _provision.readDeviceInfo();
+    if (!mounted) return;
+
+    if (info == null) {
+      setState(() {
+        _busy = false;
+        _connectingSsid = null;
+      });
+      _setMessage(
+        _provision.lastError ?? 'VisionSen cihazına ulaşılamadı.',
+        error: true,
+      );
+      return;
+    }
+
+    final deviceType = info['device_type']?.toString() ?? '';
+    final protocol = info['protocol_version'] as int?;
+    final transport = info['transport']?.toString() ?? '';
+    if (transport != 'wifi_softap' ||
+        protocol == null ||
+        !VisionSenCompatibility.isSupportedIdentity(deviceType, protocol)) {
+      await _provision.disconnect();
+      if (!mounted) return;
+      setState(() {
+        _busy = false;
+        _connectingSsid = null;
+      });
+      _setMessage(
+        'Seçilen ağ desteklenen VisionSen OIM3 kurulum cihazı değil.',
+        error: true,
+      );
+      return;
+    }
+
+    final configured =
+        info['configured'] == true || '${info['configured']}' == 'true';
+    final serial = info['serial']?.toString().trim() ?? '';
+    final serialLocked = info['serial_locked'] == true ||
+        '${info['serial_locked']}' == 'true';
+    final identitySource = info['identity_source']?.toString().trim() ?? '';
+    final provisioningAuth = info['provisioning_auth']?.toString().trim() ?? '';
+    final name = info['device_name']?.toString().trim() ?? '';
+    final interval = info['send_interval_minutes'] as int? ?? 1;
+
+    if (serial.isEmpty ||
+        !serialLocked ||
+        identitySource != 'factory_data' ||
+        provisioningAuth != 'factory_secret') {
+      await _provision.disconnect();
+      if (!mounted) return;
+      setState(() {
+        _busy = false;
+        _connectingSsid = null;
+      });
+      _setMessage(
+        'Cihaz üretici kimliğini/provisioning güvenliğini doğrulamadı. factory_data schema v2 gerekli.',
+        error: true,
+      );
+      return;
+    }
+    if (name.isNotEmpty) _deviceName.text = name;
+    if (DeviceConfig.isSupportedSendInterval(interval)) {
+      _sendInterval = interval;
+    }
+
+    _config.deviceAlreadyConfigured = configured;
+    setState(() {
+      _busy = false;
+      _deviceInfo = info;
+      _saved = false;
+      _connectingSsid = null;
+    });
+    _setMessage(
+      configured
+          ? 'Cihaz bulundu ve yerel API doğrulandı. Ayar değişikliği için mevcut firma anahtarını girin.'
+          : 'Cihaz bulundu ve yerel API doğrulandı. Wi-Fi ve sunucu bilgilerini doldurup kaydedin.',
+    );
+  }
+
+  Future<void> _disconnect({bool showMessage = true}) async {
+    if (_busy) return;
+    setState(() => _busy = true);
+    await _provision.disconnect();
+    if (!mounted) return;
+    setState(() {
+      _busy = false;
+      _deviceInfo = null;
+      _connectingSsid = null;
+    });
+    if (showMessage) {
+      _setMessage(
+        'Cihaz Wi-Fi bağlantısı sonlandırıldı. Normal internet bağlantınız kullanılabilir.',
+      );
+    }
+  }
+
+  String? _prepareConfig() {
+    _config
+      ..ssid = _ssid.text.trim()
+      ..password = _password.text
+      ..deviceName = _deviceName.text.trim()
+      ..serverUrl = _serverUrl.text.trim()
+      ..sendIntervalMinutes = _sendInterval
+      ..currentCompanyKey = _currentCompanyKey.text.trim()
+      ..changeCompanyKey =
+          _config.deviceAlreadyConfigured && _changeCompanyKey
+      ..companyKey = _companyKey.text.trim();
+
+    if (_config.deviceAlreadyConfigured && !_changeCompanyKey) {
+      _config.companyKey = _config.currentCompanyKey;
+    }
+    return _config.validate();
+  }
+
+  Future<void> _save() async {
+    if (_busy || !_connected) return;
+    final validation = _prepareConfig();
+    if (validation != null) {
+      _setMessage(validation, error: true);
+      return;
+    }
+
+    setState(() {
+      _busy = true;
+      _message = null;
+      _messageIsError = false;
+    });
+    final ok = await _provision.writeConfiguration(_config);
+    if (!mounted) return;
+
+    if (!ok) {
+      setState(() => _busy = false);
+      _setMessage(_friendlyProvisionError(_provision.lastError), error: true);
+      return;
+    }
+
+    await _provision.disconnect();
+    if (!mounted) return;
+    setState(() {
+      _busy = false;
+      _saved = true;
+      _deviceInfo = null;
+      _foundDevices = const [];
+      _connectingSsid = null;
+    });
+    _setMessage(
+      'Ayarlar kaydedildi. Cihaz bağlantısı kapatıldı; ESP yeniden başlıyor ve hedef Wi-Fi ağına bağlanacak.',
+    );
+  }
+
+  String _friendlyProvisionError(String? raw) {
+    switch (raw) {
+      case 'ERROR:KEY_MISMATCH':
+        return 'Mevcut firma anahtarı cihazdaki anahtarla eşleşmiyor.';
+      case 'ERROR:SEND_INTERVAL':
+        return 'Gönderim aralığı yalnızca 1, 5 veya 15 dakika olabilir.';
+      case 'ERROR:SSID':
+        return 'Wi-Fi ağ adı geçersiz.';
+      case 'ERROR:WIFI_PASSWORD':
+        return 'Wi-Fi şifresi geçersiz.';
+      case 'ERROR:SERIAL_READ_ONLY':
+        return 'Seri numarası üretici kimliğidir ve mobil uygulamadan değiştirilemez.';
+      case 'ERROR:KEY_LENGTH':
+        return 'Firma anahtarı geçersiz.';
+      case 'ERROR:DEVICE_NAME':
+        return 'Cihaz adı geçersiz.';
+      case 'ERROR:URL_SCHEME':
+      case 'ERROR:URL':
+        return 'Sunucu adresi geçersiz; HTTPS adresi kullanın.';
+      case 'ERROR:SAVE':
+        return 'Cihaz ayarları belleğe kaydedilemedi.';
+      case 'ERROR:JSON':
+      case 'ERROR:TOO_LARGE':
+        return 'Cihaza gönderilen yapılandırma paketi geçersiz.';
+      default:
+        return raw?.isNotEmpty == true
+            ? raw!
+            : 'Yapılandırma cihaz tarafından kabul edilmedi.';
+    }
+  }
+
+  InputDecoration _decoration(
+    String label,
+    IconData icon, {
+    Widget? suffix,
+    String? hint,
+  }) {
+    return InputDecoration(
+      labelText: label,
+      hintText: hint,
+      prefixIcon: Icon(icon),
+      suffixIcon: suffix,
+    );
+  }
+
+  IconData _signalIcon(int bars) {
+    if (bars >= 4) return Icons.signal_wifi_4_bar;
+    if (bars == 3) return Icons.network_wifi_3_bar;
+    if (bars == 2) return Icons.network_wifi_2_bar;
+    return Icons.network_wifi_1_bar;
+  }
+
+  Widget _deviceList() {
+    if (_foundDevices.isEmpty || _connected) return const SizedBox.shrink();
+    return Panel(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              const Expanded(
+                child: Text(
+                  'Bulunan VisionSen cihazları',
+                  style: TextStyle(fontWeight: FontWeight.w900),
